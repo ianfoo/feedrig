@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
 # Multi-stage build for feedrig. The final image carries the static binary,
-# yt-dlp, ffmpeg, and chromium — everything the runtime needs.
+# yt-dlp, ffmpeg, chromium, and the React SPA — everything the runtime needs.
 #
 # Build:   docker build -t feedrig .
 # Run:     docker run -p 7777:7777 -v feedrig-data:/data -v feedrig-media:/media feedrig
@@ -9,7 +9,18 @@
 # MCP via stdio: docker run -i --rm -v feedrig-data:/data feedrig mcp
 #
 
-# --- Stage 1: build the Go binary ---------------------------------
+# --- Stage 1: build the React SPA ---------------------------------
+FROM node:22-alpine AS spa
+WORKDIR /spa
+COPY spa/package.json spa/package-lock.json* ./
+RUN npm install --no-audit --no-fund --silent
+COPY spa/ ./
+# Vite outputs to ../internal/web/static/app — emulate the layout the
+# Go embed expects.
+RUN mkdir -p /internal/web/static/app \
+    && npx vite build --outDir /internal/web/static/app --emptyOutDir
+
+# --- Stage 2: build the Go binary ---------------------------------
 FROM golang:1.24-bookworm AS build
 
 WORKDIR /src
@@ -17,11 +28,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+# Drop in the SPA build so the embed pattern picks it up.
+COPY --from=spa /internal/web/static/app ./internal/web/static/app
 # Static-ish build: pure Go SQLite means no CGO required.
 ENV CGO_ENABLED=0 GOFLAGS="-trimpath"
 RUN go build -ldflags="-s -w" -o /out/feedrig .
 
-# --- Stage 2: runtime --------------------------------------------
+# --- Stage 3: runtime --------------------------------------------
 FROM debian:bookworm-slim AS runtime
 
 # yt-dlp, ffmpeg for ingestion + transcription preprocessing.

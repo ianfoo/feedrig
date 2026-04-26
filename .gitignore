@@ -38,3 +38,11 @@ go.work.sum
 !/media/.gitkeep
 /feedrig
 
+# SPA build artifacts
+/spa/node_modules/
+/spa/dist/
+/spa/tsconfig.tsbuildinfo
+/internal/web/static/app/assets/
+/internal/web/static/app/index.html
+!/internal/web/static/app/.gitkeep
+

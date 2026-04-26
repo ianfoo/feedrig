@@ -28,6 +28,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v1/groups", s.apiListGroups)
 	mux.HandleFunc("GET /api/v1/groups/{slug}/feed", s.apiGroupFeed)
+	mux.HandleFunc("GET /api/v1/search", s.apiSearch)
 }
 
 // ---- helpers ----
@@ -251,6 +252,49 @@ func (s *Server) apiListGroups(w http.ResponseWriter, r *http.Request) {
 	out := make([]groupDTO, len(gs))
 	for i, g := range gs {
 		out[i] = toGroupDTO(g)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type searchHit struct {
+	VideoID   int64  `json:"video_id"`
+	Title     string `json:"title"`
+	Creator   string `json:"creator"`
+	Field     string `json:"matched_in"`
+	Excerpt   string `json:"excerpt"`
+	State     string `json:"state"`
+}
+
+func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, []searchHit{})
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	hits, err := s.enrich.Search(r.Context(), q, limit)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]searchHit, 0, len(hits))
+	creatorCache := map[int64]string{}
+	for _, h := range hits {
+		handle, ok := creatorCache[h.CreatorID]
+		if !ok {
+			if c, err := s.creators.Get(r.Context(), h.CreatorID); err == nil {
+				handle = c.Handle
+				creatorCache[h.CreatorID] = handle
+			}
+		}
+		state := ""
+		if v, err := s.videos.Get(r.Context(), h.VideoID); err == nil {
+			state = string(v.State)
+		}
+		out = append(out, searchHit{
+			VideoID: h.VideoID, Title: h.Title, Creator: handle,
+			Field: h.Field, Excerpt: h.Excerpt, State: state,
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

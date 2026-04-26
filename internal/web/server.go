@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -118,6 +119,33 @@ func (s *Server) Routes() http.Handler {
 
 	staticFS, _ := fs.Sub(assets, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+
+	// SPA: any /app/... path that doesn't resolve to a built asset falls
+	// back to index.html so React Router can take over. The Vite build
+	// places output under internal/web/static/app/.
+	mux.HandleFunc("GET /app/", func(w http.ResponseWriter, r *http.Request) {
+		rel := strings.TrimPrefix(r.URL.Path, "/app/")
+		if rel == "" {
+			rel = "index.html"
+		}
+		path := "static/app/" + rel
+		// Try the requested asset; if missing, serve index.html.
+		if _, err := fs.Stat(assets, path); err != nil {
+			path = "static/app/index.html"
+		}
+		f, err := assets.Open(path)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+		stat, _ := f.Stat()
+		if seeker, ok := f.(io.ReadSeeker); ok {
+			http.ServeContent(w, r, stat.Name(), stat.ModTime(), seeker)
+			return
+		}
+		http.NotFound(w, r)
+	})
 
 	// Media files served from disk; relative paths only, no traversal.
 	mux.Handle("GET /media/", http.StripPrefix("/media/", safeFileServer(s.mediaRoot)))

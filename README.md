@@ -22,9 +22,24 @@ shipped vs. planned.
 ## Quick start
 
 ```sh
-go build -o feedrig .
-./feedrig -addr 127.0.0.1:7777
-# open http://127.0.0.1:7777
+make           # builds the SPA and the Go binary
+./feedrig      # starts the server on http://127.0.0.1:7777
+# Server-rendered UI: http://127.0.0.1:7777/
+# React SPA:          http://127.0.0.1:7777/app/
+```
+
+Or, if you don't want the SPA built into the binary:
+
+```sh
+make go        # Go-only build; SPA shell is empty
+./feedrig
+```
+
+Or with Docker:
+
+```sh
+make docker
+docker run -p 7777:7777 -v feedrig-data:/data -v feedrig-media:/media feedrig
 ```
 
 Flags:

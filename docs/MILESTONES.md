@@ -223,6 +223,42 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 
 ---
 
+## v0.9 — React SPA + Capacitor
+
+**Status:** ✅ shipped (parity-with-server-rendered for the core flows; per-creator detail and group-edit still bounce to the legacy view).
+
+**Features:**
+
+- [x] **Vite + React 18 + TypeScript + Tailwind** scaffold under `spa/`. Output goes to `internal/web/static/app/` and is embedded into the Go binary via the existing `static/*` embed pattern. Single artifact for deploy.
+- [x] **TanStack Query** for data fetching with sane defaults (1 retry, 30s stale, no-window-focus refetch). Shared cache across pages.
+- [x] **React Router** with `basename="/app"` so the SPA lives at `/app/...` while the legacy server-rendered UI stays at `/`.
+- [x] **Pages shipped**: Creators (list/add/filter/delete), CreatorDetail (heads-up + link to legacy), VideoPage (full player parity: scrubber, speed buttons 0.75–2.5×, J/K/L keyboard, position persistence via sendBeacon, save/delete/archive states), Groups (list), GroupFeed (with All/Unseen + tag chips, video grid via VideoCard), Search (querying the new `/api/v1/search` endpoint).
+- [x] **Mobile-first layout**: bottom-tab nav on `<md`, top nav on `>=md`, sticky topbar with the crane logo, viewport meta with safe-area inset, touch-sized buttons. `pb-16` reserves space for the mobile bottom nav.
+- [x] **`/api/v1/search`** endpoint added (was missing from the JSON surface; legacy `/search` was HTML-only). Returns `[{video_id, title, creator, matched_in, excerpt, state}]`.
+- [x] **`GET /app/...` handler** in the Go server falls back to `index.html` for unknown paths so client-side routing deep-links work.
+- [x] **Capacitor config** (`spa/capacitor.config.ts`) — points at the same Vite output. Bootstrap commands documented inline. `webDir` and platform settings ready for `npx cap add ios` / `npx cap add android`.
+- [x] **Dockerfile** updated to a 3-stage build: SPA (node:22-alpine) → Go (golang:1.24-bookworm) → runtime (debian:bookworm-slim with chromium, yt-dlp, ffmpeg, tini). Single image ships the binary + SPA + all dependencies.
+- [x] **Makefile** with `make`, `make spa`, `make go`, `make docker`, `make clean`, `make run` for friendly local builds.
+- [x] **Topbar link** from the legacy UI: `SPA →` so users can find the new shell.
+
+**Deferred to v0.9.1:**
+
+- Port the per-creator detail view (video grid + Fetch-now + cadence + history) to the SPA.
+- Port group-edit (memberships + tag filters + delete) to the SPA.
+- Settings / Pending pages in the SPA.
+- TikTok-style swipe feed for group feeds (snap-scroll + preload-next). Today's feed is a responsive grid.
+- Native packaging actually compiled (requires Xcode / Android Studio on a dev machine; Capacitor config is in place).
+
+**Smoke test:**
+
+- `/app/` serves the SPA shell; deep link `/app/creators` falls back to index.html (HTTP 200, contains `id="root"`). ✅
+- `/app/assets/index-*.js` serves with `text/javascript` content type, ~232 KB (~73 KB gzip). ✅
+- `/api/v1/search?q=slap` returns `[{video_id:1, title:"Slap groove", creator:"basscat", matched_in:"title", state:"active", ...}]`. ✅
+- `/api/v1/creators` returns the list, used by the SPA for both Creators page and the GroupFeed creator-handle map. ✅
+- Build pipeline: `make spa` → `make go` → `./feedrig` works end-to-end. Docker build path covered by the Dockerfile.
+
+---
+
 ## v0.7 — Subcommands, Dockerfile, SMTP digest, storage routing
 
 **Status:** ✅ shipped.
