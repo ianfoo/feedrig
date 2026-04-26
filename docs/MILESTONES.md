@@ -175,19 +175,70 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 
 ---
 
-## v0.5 — Digest + S3 + React SPA
+## v0.5 — Digest, JSON API, storage interface, pacing
 
-**Status:** ⏳ planned.
+**Status:** ✅ shipped (with React SPA + email delivery deferred to v0.6 — see below).
 
 **Features:**
 
-- [ ] Digest renderer: per-group HTML digest of new content with summaries + thumbnails. Configurable cadence (daily / weekly).
-- [ ] Delivery channels: in-app digest page, email (SMTP env config), optional webhook for "Slack / Discord / signal-cli".
-- [ ] `storage.Blob` interface; impls: `localfs`, `s3` (AWS or any S3-compatible — Cloudflare R2, MinIO).
-- [ ] React + Vite + TypeScript SPA at `/app/`. Mobile-first. Tailwind for styling. Wraps cleanly under Capacitor for native packaging.
-- [ ] HTML template UI removed (or kept as `/admin/` debug surface — decide at the time).
+- [x] **Digest renderer**: `/groups/{slug}/digest` produces a print-friendly per-group digest with thumbnails, tags, and summaries; "Print" button calls `window.print()`.
+- [x] **JSON API surface** (`/api/v1/*`): list creators, add/delete creator, get video, save / mark-pending video, position update, list groups, group feed (with `?unseen=1` and `?tag=`). Versioned for breaking-change isolation. Same service-layer calls as the HTML routes — no logic duplication.
+- [x] **`internal/storage`**: `Blob` interface with `LocalFS` impl that mirrors today's on-disk layout, plus an `S3` stub that returns `ErrNotConfigured`. Wiring the system to use the interface is queued (current code paths still touch the filesystem directly via `os` calls); the interface alone unblocks future hosted deployment without further design churn.
+- [x] **Pacing in the chromedp discoverer**: jittered sleeps (default 1.5s–4s) between scrolls, configurable via `PacingMin` / `PacingMax`, so the headless browser doesn't hammer profile pages back-to-back. Politeness, not detection-evasion.
 
-**Deviations:** TBD.
+**Deviations from the original v0.5 plan:**
+
+- **React + Vite + Tailwind SPA deferred to v0.6.** The JSON API surface needed for it is in place. Building the SPA itself is a multi-day task and not the highest-value next step; the templated UI is fully functional and mobile-responsive.
+- **Email digest delivery deferred to v0.6.** The digest is rendered as an HTML page; piping it through an SMTP client + cron-like trigger is a separate, isolated piece of work.
+- **Webhook delivery (Slack / Discord) deferred** as a v0.6+ candidate.
+- **Existing code paths still touch the filesystem directly.** Routing them through `storage.Blob` is mechanical refactoring queued for v0.6.
+
+**Smoke test:**
+
+- `GET /api/v1/creators` → `[]` (empty); `POST {"handle":"natgeo",...}` → 201 + full DTO; `GET` again → populated. ✅
+- `GET /groups/news/digest` renders an `<article class="digest-item">` per video. ✅
+- `GET /api/v1/groups/news/feed` returns `{group, videos[]}` with full video DTOs. ✅
+
+---
+
+## v0.6 — Onboarding, native shell, hosted (planned)
+
+**Status:** ⏳ planned. Lots of ideas; bullets are unprioritized.
+
+### From the user mid-v0.5
+
+- **Pre-categorization of currently-followed creators.** When the user adds a creator, optionally fetch their bio + link-in-bio (Linktree, Beacons, etc.) and use the LLM to suggest categories the user can accept / reject. Dramatically cuts initial-setup friction.
+- **"Who I follow" import path.** No public API; Instagram does provide a "Download your data" feature that exports a `following.html` / `following.json`. Add an import endpoint that consumes that file and bulk-creates creators.
+- **Pre-categorization heuristic from existing posts.** First N videos through the enrichment pipeline already produce tags; aggregate those into a "primary topics" suggestion for the creator card.
+- **Out of scope (declined):** automated burner-account creation, multi-account work distribution to evade rate limits. Both are TOS-violating, technically fragile (single-IP sock puppets ban together), and approach detection-evasion. The legitimate path is one user-created burner with cookies passed via `--cookies`.
+
+### Frontend
+
+- React + Vite + TypeScript + Tailwind SPA at `/app/`, consuming `/api/v1/*`. Mobile-first.
+- Capacitor wrapper for native iOS/Android packaging — same web build, no parallel UI codebase.
+- TikTok-style swipe feed for group-feed pages (vertical snap, preload next).
+- HTML templates retired (or relocated to `/admin/`).
+
+### Delivery
+
+- Email digest via SMTP (env-configured: `FEEDRIG_SMTP_HOST` etc.) with per-group cadence.
+- Optional webhook for Slack / Discord / signal-cli.
+- Push notifications via Capacitor's plugin (when SPA is up).
+
+### Infra
+
+- Wire all media reads/writes through `storage.Blob` so swapping `LocalFS` ↔ `S3` is a config change.
+- Real S3 impl using `aws-sdk-go-v2`, with Cloudflare R2 / MinIO compatibility tested.
+- Optional auth (single-user session cookie) once the binary leaves localhost.
+
+### Smaller follow-ups
+
+- Per-creator UI to override poll cadence (column already in DB).
+- Drag-to-reorder groups (column already in DB).
+- Item cap, min/max-duration, watched-only filters on smart playlists.
+- Hot-reload of the scheduler when creators are added/deleted (no server restart).
+- RSS export per group.
+- React SPA / Capacitor wrap.
 
 ---
 

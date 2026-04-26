@@ -94,6 +94,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /groups/{slug}/update", s.groupUpdate)
 	mux.HandleFunc("POST /groups/{slug}/delete", s.groupDelete)
 	mux.HandleFunc("POST /groups/{slug}/members", s.groupSetMembers)
+	mux.HandleFunc("GET /groups/{slug}/digest", s.groupDigest)
+
+	s.registerAPI(mux)
 
 	return mux
 }
@@ -552,6 +555,49 @@ func (s *Server) groupFeed(w http.ResponseWriter, r *http.Request) {
 		"ActiveTag":  r.URL.Query().Get("tag"),
 		"Flash":      r.URL.Query().Get("flash"),
 		"Error":      r.URL.Query().Get("err"),
+	})
+}
+
+func (s *Server) groupDigest(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	q := groups.FeedQuery{OnlyUnseen: r.URL.Query().Get("unseen") == "1"}
+	vids, err := s.groups.Feed(r.Context(), g, q)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	type row struct {
+		Video   video.Video
+		Creator string
+		Tags    []enrich.Tag
+		Summary *enrich.Summary
+	}
+	rows := make([]row, len(vids))
+	creatorCache := map[int64]string{}
+	for i, v := range vids {
+		handle := creatorCache[v.CreatorID]
+		if handle == "" {
+			if c, err := s.creators.Get(r.Context(), v.CreatorID); err == nil {
+				handle = c.Handle
+				creatorCache[v.CreatorID] = handle
+			}
+		}
+		tags, _ := s.enrich.TagsForVideo(r.Context(), v.ID)
+		summary, _ := s.enrich.GetSummary(r.Context(), v.ID)
+		rows[i] = row{Video: v, Creator: handle, Tags: tags, Summary: summary}
+	}
+	s.render(w, "digest.html", map[string]any{
+		"Group":       g,
+		"Rows":        rows,
+		"GeneratedAt": time.Now(),
 	})
 }
 

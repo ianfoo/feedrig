@@ -119,6 +119,22 @@ Lightweight ADRs. Each entry: what, why, alternatives considered, status.
 
 ---
 
+## ADR-011a: No automated burner-account creation; no multi-account work distribution
+
+**Decision:** feedrig will not include features to:
+- Auto-create Instagram burner accounts via the headless browser + email verification.
+- Distribute scraping work across multiple sock-puppet accounts to evade rate limits.
+
+**Rationale:**
+
+1. **TOS posture.** Instagram's terms explicitly prohibit automated account creation and operation of multiple accounts to circumvent enforcement. The legitimate path is one user-created burner whose session cookies the user passes via `--cookies`.
+2. **Detection-evasion line.** Auto-signup + multi-account orchestration for the explicit purpose of "looking less like one bot" is detection-evasion territory regardless of the otherwise benign use case (personal media curation). Politeness pacing — randomized sleeps, conservative scroll — stays.
+3. **Technical fragility.** Single-IP sock puppets get banned together when one trips a flag, so the engineering cost doesn't even buy the resilience benefit it advertises.
+
+**Status:** Accepted (decline). The pacing/jitter feature lands; the rest does not.
+
+---
+
 ## ADR-011: No `run_in_background` for long-running servers in dev workflows
 
 **Decision (process):** When smoke-testing the server during development, run it in the foreground inside a single shell command that boots, hits, and kills the server. Avoid `run_in_background` for the server.

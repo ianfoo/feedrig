@@ -35,8 +35,25 @@ Flags:
 | `-data` | `data` | SQLite DB directory |
 | `-media` | `media` | Downloaded video directory |
 | `-cookies` | (empty) | Optional `yt-dlp`-format cookie file for IG auth |
+| `-discoverer` | `auto` | `auto` (chromedp → instago) / `chromedp` / `instago` / `none` |
+| `-chrome` | (empty) | Path to Chromium/Chrome (default: search PATH) |
+| `-summarizer` | `stub` | `stub` (offline) / `openrouter` / `none` |
+| `-openrouter-model` | `anthropic/claude-3.5-haiku` | OpenRouter model id (set `OPENROUTER_API_KEY`) |
+| `-whisper-model` | (empty) | Path to a `whisper.cpp` `.bin` model; empty disables transcription |
+| `-categories` | (preset list) | Comma-separated category menu shown to the summarizer |
 
-Requires `yt-dlp` and `ffmpeg` on `PATH` for ingestion.
+Requires `yt-dlp`, `ffmpeg`, and (for `chromedp` discovery) Chromium / Chrome on `PATH`.
+
+## Major routes
+
+- `/creators` — manage your curated list (sort, filter, bulk add via paste or `.txt`/`.csv`)
+- `/creators/{id}` — per-creator video grid with last-watched marker
+- `/videos/{id}` — player (scrubber, speed buttons, keyboard nav, save/delete)
+- `/groups` and `/groups/{slug}` — smart playlists with tag filters and "unseen since last visit"
+- `/groups/{slug}/digest` — print-friendly per-group digest
+- `/pending` — videos about to be auto-removed (TTL grace window)
+- `/settings` — poll cadence, TTL, grace
+- `/api/v1/*` — JSON API mirroring the HTML routes (consumed by future SPA / native app)
 
 ## Documentation
 
