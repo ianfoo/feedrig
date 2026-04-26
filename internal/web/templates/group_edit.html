@@ -32,7 +32,7 @@
             {{range .Rows}}
             <li>
                 <span class="m-handle">@{{.Creator.Handle}}</span>
-                {{with .Creator.DisplayName.String}}<span class="m-dn">{{.}}</span>{{end}}
+                {{with .Creator.DisplayName}}<span class="m-dn">{{.}}</span>{{end}}
                 <label class="m-toggle">
                     <input type="radio" name="creator_{{.Creator.ID}}" value="none" {{if not (or .Included .Excluded)}}checked{{end}}>
                     <span>none</span>

@@ -68,16 +68,16 @@ func (r *Renderer) Render(ctx context.Context, g *groups.Group, onlyUnseen bool)
 			}
 		}
 		var posted time.Time
-		if v.PostedAt.Valid {
-			posted = time.Unix(v.PostedAt.Int64, 0)
+		if v.PostedAt != nil {
+			posted = *v.PostedAt
 		} else {
 			posted = v.DownloadedAt
 		}
 		summary := ""
 		if sm, _ := r.Enrich.GetSummary(ctx, v.ID); sm != nil {
 			summary = sm.Summary
-		} else if v.Description.Valid {
-			summary = v.Description.String
+		} else if v.Description != "" {
+			summary = v.Description
 		}
 		var tagNames []string
 		if tags, _ := r.Enrich.TagsForVideo(ctx, v.ID); len(tags) > 0 {
@@ -86,7 +86,7 @@ func (r *Renderer) Render(ctx context.Context, g *groups.Group, onlyUnseen bool)
 				tagNames[j] = t.Name
 			}
 		}
-		title := v.Title.String
+		title := v.Title
 		if title == "" {
 			title = "(untitled)"
 		}
@@ -97,7 +97,7 @@ func (r *Renderer) Render(ctx context.Context, g *groups.Group, onlyUnseen bool)
 			Posted:   posted,
 			Tags:     tagNames,
 			Summary:  summary,
-			Duration: nullableInt(v.DurationSeconds.Valid, v.DurationSeconds.Int64),
+			Duration: v.DurationSeconds,
 		}
 	}
 
@@ -126,13 +126,6 @@ func (r *Renderer) Render(ctx context.Context, g *groups.Group, onlyUnseen bool)
 		HTMLBody: htmlBuf.String(),
 		TextBody: textBuf.String(),
 	}, nil
-}
-
-func nullableInt(valid bool, v int64) int64 {
-	if !valid {
-		return 0
-	}
-	return v
 }
 
 // Email-friendly HTML: inline styles only; clients strip <style> blocks.

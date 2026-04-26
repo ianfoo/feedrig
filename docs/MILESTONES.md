@@ -223,6 +223,32 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 
 ---
 
+## v0.8 — Domain-types refactor (ADR-012)
+
+**Status:** ✅ shipped.
+
+**What changed:**
+
+- **`creator.Creator`**: `DisplayName sql.NullString` → `string` (empty = unset). `LastFetchedAt sql.NullInt64` → `*time.Time`. `PollIntervalSeconds sql.NullInt64` → `int64` (0 = use default). `FollowedAt sql.NullInt64` → `*time.Time`.
+- **`video.Video`**: `Title`, `Description`, `ThumbnailPath` → `string`. `DurationSeconds` → `int64` (0 = unknown). `PostedAt` → `*time.Time`. Same for `WatchState.WatchedAt`.
+- **`groups.Group.LastVisitedAt`** → `*time.Time`.
+- SQL nullables stay private to each store package via `scanCreator` / `scanVideo` (now exported as `video.ScanRow` for the `groups.Feed` query that produces video values), plus `nullableString` / `nullableInt64` / `nullableUnix` write helpers.
+- All call sites updated: handlers, templates, ingest, enrich, schedule, ttl, digest, rss, mcp, api DTOs.
+- Templates use plain field access with `{{with}}` for optional pointers/strings — no more `.Valid` / `.String` / `.Int64`.
+- `humanTime` template helper extended to accept `*time.Time` alongside `time.Time` and `int64`.
+
+**Why:** the user's instinct was right — `database/sql` types leaked across every layer (handlers, templates, ingest), making tests harder and templates noisy. The store seam now hides them entirely.
+
+**Smoke test (post-refactor end-to-end):**
+
+- Server-rendered creators, creator detail, player, group feed, digest, search all render. ✅
+- `feedrig digest <slug>` text mode renders correctly. ✅
+- `feedrig mcp` `search_videos` and `get_video` return proper JSON shape. ✅
+- `/api/v1/creators`, `/api/v1/videos/{id}`, `/api/v1/groups/{slug}/feed` return correct DTOs (omitempty respects empty strings → JSON is identical-or-cleaner than before). ✅
+- TanStack Query caches in the SPA continue to work; the SPA's TS types match the API output (optional fields use `?`, which JSON `omitempty` still produces). ✅
+
+---
+
 ## v0.9 — React SPA + Capacitor
 
 **Status:** ✅ shipped (parity-with-server-rendered for the core flows; per-creator detail and group-edit still bounce to the legacy view).

@@ -56,16 +56,14 @@ type creatorDTO struct {
 
 func toCreatorDTO(c creator.Creator) creatorDTO {
 	d := creatorDTO{
-		ID:         c.ID,
-		Handle:     c.Handle,
-		ProfileURL: c.ProfileURL,
-		AddedAt:    c.AddedAt.Unix(),
+		ID:          c.ID,
+		Handle:      c.Handle,
+		DisplayName: c.DisplayName,
+		ProfileURL:  c.ProfileURL,
+		AddedAt:     c.AddedAt.Unix(),
 	}
-	if c.DisplayName.Valid {
-		d.DisplayName = c.DisplayName.String
-	}
-	if c.LastFetchedAt.Valid {
-		d.LastFetchedAt = c.LastFetchedAt.Int64
+	if c.LastFetchedAt != nil {
+		d.LastFetchedAt = c.LastFetchedAt.Unix()
 	}
 	return d
 }
@@ -89,28 +87,22 @@ type videoDTO struct {
 
 func (s *Server) toVideoDTO(v video.Video) videoDTO {
 	d := videoDTO{
-		ID:           v.ID,
-		CreatorID:    v.CreatorID,
-		ExternalID:   v.ExternalID,
-		URL:          v.URL,
-		DownloadedAt: v.DownloadedAt.Unix(),
-		State:        string(v.State),
-		MediaURL:     mediaURLFor(s.mediaRoot, v.FilePath),
+		ID:              v.ID,
+		CreatorID:       v.CreatorID,
+		ExternalID:      v.ExternalID,
+		URL:             v.URL,
+		Title:           v.Title,
+		Description:     v.Description,
+		DurationSeconds: v.DurationSeconds,
+		DownloadedAt:    v.DownloadedAt.Unix(),
+		State:           string(v.State),
+		MediaURL:        s.publicURL(v.FilePath),
 	}
-	if v.Title.Valid {
-		d.Title = v.Title.String
+	if v.PostedAt != nil {
+		d.PostedAt = v.PostedAt.Unix()
 	}
-	if v.Description.Valid {
-		d.Description = v.Description.String
-	}
-	if v.DurationSeconds.Valid {
-		d.DurationSeconds = v.DurationSeconds.Int64
-	}
-	if v.PostedAt.Valid {
-		d.PostedAt = v.PostedAt.Int64
-	}
-	if v.ThumbnailPath.Valid {
-		d.ThumbnailURL = mediaURLFor(s.mediaRoot, v.ThumbnailPath.String)
+	if v.ThumbnailPath != "" {
+		d.ThumbnailURL = s.publicURL(v.ThumbnailPath)
 	}
 	return d
 }
@@ -134,8 +126,8 @@ func toGroupDTO(g groups.Group) groupDTO {
 		IncludeTags: g.IncludeTags,
 		ExcludeTags: g.ExcludeTags,
 	}
-	if g.LastVisitedAt.Valid {
-		d.LastVisitedAt = g.LastVisitedAt.Int64
+	if g.LastVisitedAt != nil {
+		d.LastVisitedAt = g.LastVisitedAt.Unix()
 	}
 	return d
 }

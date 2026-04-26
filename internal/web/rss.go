@@ -70,20 +70,20 @@ func (s *Server) groupRSS(w http.ResponseWriter, r *http.Request) {
 
 	for _, v := range vids {
 		var posted time.Time
-		if v.PostedAt.Valid {
-			posted = time.Unix(v.PostedAt.Int64, 0)
+		if v.PostedAt != nil {
+			posted = *v.PostedAt
 		} else {
 			posted = v.DownloadedAt
 		}
 		desc := ""
 		if sm, _ := s.enrich.GetSummary(r.Context(), v.ID); sm != nil {
 			desc = sm.Summary
-		} else if v.Description.Valid {
-			desc = v.Description.String
+		} else if v.Description != "" {
+			desc = v.Description
 		}
 		title := "(untitled)"
-		if v.Title.Valid && v.Title.String != "" {
-			title = v.Title.String
+		if v.Title != "" {
+			title = v.Title
 		}
 		doc.Channel.Items = append(doc.Channel.Items, rssItem{
 			Title:       title,

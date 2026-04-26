@@ -137,25 +137,18 @@ func (s *Service) fetchURL(ctx context.Context, c *creator.Creator, url string) 
 	}
 
 	v := &video.Video{
-		CreatorID:  c.ID,
-		ExternalID: res.ExternalID,
-		URL:        res.URL,
-		FilePath:   res.FilePath,
-	}
-	if res.Title != "" {
-		v.Title.String, v.Title.Valid = res.Title, true
-	}
-	if res.Description != "" {
-		v.Description.String, v.Description.Valid = res.Description, true
-	}
-	if res.DurationSeconds > 0 {
-		v.DurationSeconds.Int64, v.DurationSeconds.Valid = res.DurationSeconds, true
+		CreatorID:       c.ID,
+		ExternalID:      res.ExternalID,
+		URL:             res.URL,
+		Title:           res.Title,
+		Description:     res.Description,
+		DurationSeconds: res.DurationSeconds,
+		FilePath:        res.FilePath,
+		ThumbnailPath:   res.ThumbnailPath,
 	}
 	if !res.PostedAt.IsZero() {
-		v.PostedAt.Int64, v.PostedAt.Valid = res.PostedAt.Unix(), true
-	}
-	if res.ThumbnailPath != "" {
-		v.ThumbnailPath.String, v.ThumbnailPath.Valid = res.ThumbnailPath, true
+		t := res.PostedAt
+		v.PostedAt = &t
 	}
 
 	id, err := s.videos.Insert(ctx, v)

@@ -29,7 +29,7 @@ type Group struct {
 	IncludeTags   []string
 	ExcludeTags   []string
 	Position      int
-	LastVisitedAt sql.NullInt64
+	LastVisitedAt *time.Time // nil = never visited
 	CreatedAt     time.Time
 }
 
@@ -89,10 +89,11 @@ func (s *Store) Get(ctx context.Context, id int64) (*Group, error) {
 	var g Group
 	var inc, exc string
 	var created int64
+	var lastVisited sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, name, slug, recency_days, include_tags, exclude_tags, position, last_visited_at, created_at
 		FROM groups WHERE id = ?
-	`, id).Scan(&g.ID, &g.Name, &g.Slug, &g.RecencyDays, &inc, &exc, &g.Position, &g.LastVisitedAt, &created)
+	`, id).Scan(&g.ID, &g.Name, &g.Slug, &g.RecencyDays, &inc, &exc, &g.Position, &lastVisited, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -102,6 +103,10 @@ func (s *Store) Get(ctx context.Context, id int64) (*Group, error) {
 	g.IncludeTags = splitCSV(inc)
 	g.ExcludeTags = splitCSV(exc)
 	g.CreatedAt = time.Unix(created, 0)
+	if lastVisited.Valid {
+		t := time.Unix(lastVisited.Int64, 0)
+		g.LastVisitedAt = &t
+	}
 	return &g, nil
 }
 
@@ -131,12 +136,17 @@ func (s *Store) List(ctx context.Context) ([]Group, error) {
 		var g Group
 		var inc, exc string
 		var created int64
-		if err := rows.Scan(&g.ID, &g.Name, &g.Slug, &g.RecencyDays, &inc, &exc, &g.Position, &g.LastVisitedAt, &created); err != nil {
+		var lastVisited sql.NullInt64
+		if err := rows.Scan(&g.ID, &g.Name, &g.Slug, &g.RecencyDays, &inc, &exc, &g.Position, &lastVisited, &created); err != nil {
 			return nil, err
 		}
 		g.IncludeTags = splitCSV(inc)
 		g.ExcludeTags = splitCSV(exc)
 		g.CreatedAt = time.Unix(created, 0)
+		if lastVisited.Valid {
+			t := time.Unix(lastVisited.Int64, 0)
+			g.LastVisitedAt = &t
+		}
 		out = append(out, g)
 	}
 	return out, rows.Err()
@@ -270,8 +280,8 @@ type FeedQuery struct {
 // FeedQuery overrides. Results are newest-first.
 func (s *Store) Feed(ctx context.Context, g *Group, q FeedQuery) ([]video.Video, error) {
 	since := time.Now().Add(-settings.DurationFromDays(g.RecencyDays)).Unix()
-	if (q.OnlyUnseen || q.OnlyNew) && g.LastVisitedAt.Valid && g.LastVisitedAt.Int64 > since {
-		since = g.LastVisitedAt.Int64
+	if (q.OnlyUnseen || q.OnlyNew) && g.LastVisitedAt != nil && g.LastVisitedAt.Unix() > since {
+		since = g.LastVisitedAt.Unix()
 	}
 
 	var args []any
@@ -334,18 +344,11 @@ func (s *Store) Feed(ctx context.Context, g *Group, q FeedQuery) ([]video.Video,
 	defer rows.Close()
 	var out []video.Video
 	for rows.Next() {
-		var v video.Video
-		var downloaded, stateChanged int64
-		var state string
-		if err := rows.Scan(&v.ID, &v.CreatorID, &v.ExternalID, &v.URL, &v.Title, &v.Description,
-			&v.DurationSeconds, &v.PostedAt, &downloaded, &v.FilePath, &v.ThumbnailPath,
-			&state, &stateChanged); err != nil {
+		v, err := video.ScanRow(rows)
+		if err != nil {
 			return nil, err
 		}
-		v.DownloadedAt = time.Unix(downloaded, 0)
-		v.StateChangedAt = time.Unix(stateChanged, 0)
-		v.State = video.State(state)
-		out = append(out, v)
+		out = append(out, *v)
 	}
 	return out, rows.Err()
 }

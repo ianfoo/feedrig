@@ -21,27 +21,31 @@ const (
 	StateArchived State = "archived"
 )
 
+// Video is the domain type. Optional strings use empty-string-is-unset; an
+// optional duration uses 0; optional timestamps use *time.Time. SQL nullables
+// are confined to the store implementation. (ADR-012.)
 type Video struct {
 	ID              int64
 	CreatorID       int64
 	ExternalID      string
 	URL             string
-	Title           sql.NullString
-	Description     sql.NullString
-	DurationSeconds sql.NullInt64
-	PostedAt        sql.NullInt64
+	Title           string
+	Description     string
+	DurationSeconds int64      // 0 = unknown
+	PostedAt        *time.Time // nil = IG didn't expose the timestamp
 	DownloadedAt    time.Time
 	FilePath        string
-	ThumbnailPath   sql.NullString
+	ThumbnailPath   string // empty = no thumbnail
 	State           State
 	StateChangedAt  time.Time
 }
 
+// Posted reports whether the IG-reported post time is known.
 func (v Video) Posted() (time.Time, bool) {
-	if !v.PostedAt.Valid {
+	if v.PostedAt == nil {
 		return time.Time{}, false
 	}
-	return time.Unix(v.PostedAt.Int64, 0), true
+	return *v.PostedAt, true
 }
 
 // SortKey returns the timestamp used to order videos newest-first; falls back
@@ -57,7 +61,7 @@ type WatchState struct {
 	VideoID             int64
 	LastPositionSeconds float64
 	Watched             bool
-	WatchedAt           sql.NullInt64
+	WatchedAt           *time.Time
 	UpdatedAt           time.Time
 }
 
@@ -76,9 +80,10 @@ func (s *Store) Insert(ctx context.Context, v *Video) (int64, error) {
 			thumbnail_path, state, state_changed_at
 		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		v.CreatorID, v.ExternalID, v.URL, v.Title, v.Description,
-		v.DurationSeconds, v.PostedAt, now, v.FilePath,
-		v.ThumbnailPath, string(StateActive), now,
+		v.CreatorID, v.ExternalID, v.URL,
+		nullableString(v.Title), nullableString(v.Description),
+		nullableInt64(v.DurationSeconds), nullableUnix(v.PostedAt), now, v.FilePath,
+		nullableString(v.ThumbnailPath), string(StateActive), now,
 	)
 	if err != nil {
 		if isUnique(err) {
@@ -173,16 +178,12 @@ func (s *Store) SetState(ctx context.Context, id int64, state State) error {
 // timestamp is bumped so the TTL clock starts over.
 func (s *Store) UpdateAfterRedownload(ctx context.Context, id int64, filePath, thumbPath string) error {
 	now := time.Now().Unix()
-	var thumb sql.NullString
-	if thumbPath != "" {
-		thumb = sql.NullString{String: thumbPath, Valid: true}
-	}
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE videos
 		   SET file_path = ?, thumbnail_path = COALESCE(?, thumbnail_path),
 		       downloaded_at = ?, state = ?, state_changed_at = ?
 		 WHERE id = ?
-	`, filePath, thumb, now, string(StateActive), now, id)
+	`, filePath, nullableString(thumbPath), now, string(StateActive), now, id)
 	return err
 }
 
@@ -212,16 +213,21 @@ func (s *Store) ListByState(ctx context.Context, state State) ([]Video, error) {
 
 func (s *Store) GetWatch(ctx context.Context, videoID int64) (*WatchState, error) {
 	var w WatchState
+	var watchedAt sql.NullInt64
 	var updated int64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT video_id, last_position_seconds, watched, watched_at, updated_at FROM watch_state WHERE video_id = ?`,
 		videoID,
-	).Scan(&w.VideoID, &w.LastPositionSeconds, &w.Watched, &w.WatchedAt, &updated)
+	).Scan(&w.VideoID, &w.LastPositionSeconds, &w.Watched, &watchedAt, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return &WatchState{VideoID: videoID}, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if watchedAt.Valid {
+		t := time.Unix(watchedAt.Int64, 0)
+		w.WatchedAt = &t
 	}
 	w.UpdatedAt = time.Unix(updated, 0)
 	return &w, nil
@@ -273,13 +279,21 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
+// ScanRow is the exported scan helper for callers (e.g. internal/groups)
+// that build their own Video-shaped queries with the same column order as
+// `selectCols`. The argument is anything implementing Scan — typically
+// *sql.Rows in a Next() loop, or *sql.Row.
+func ScanRow(s scanner) (*Video, error) { return scanVideo(s) }
+
 func scanVideo(s scanner) (*Video, error) {
 	var v Video
+	var title, description, thumbnailPath sql.NullString
+	var durationSeconds, postedAt sql.NullInt64
 	var downloaded, stateChanged int64
 	var state string
 	if err := s.Scan(
-		&v.ID, &v.CreatorID, &v.ExternalID, &v.URL, &v.Title, &v.Description,
-		&v.DurationSeconds, &v.PostedAt, &downloaded, &v.FilePath, &v.ThumbnailPath,
+		&v.ID, &v.CreatorID, &v.ExternalID, &v.URL, &title, &description,
+		&durationSeconds, &postedAt, &downloaded, &v.FilePath, &thumbnailPath,
 		&state, &stateChanged,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -287,10 +301,51 @@ func scanVideo(s scanner) (*Video, error) {
 		}
 		return nil, err
 	}
+	if title.Valid {
+		v.Title = title.String
+	}
+	if description.Valid {
+		v.Description = description.String
+	}
+	if thumbnailPath.Valid {
+		v.ThumbnailPath = thumbnailPath.String
+	}
+	if durationSeconds.Valid {
+		v.DurationSeconds = durationSeconds.Int64
+	}
+	if postedAt.Valid {
+		t := time.Unix(postedAt.Int64, 0)
+		v.PostedAt = &t
+	}
 	v.DownloadedAt = time.Unix(downloaded, 0)
 	v.StateChangedAt = time.Unix(stateChanged, 0)
 	v.State = State(state)
 	return &v, nil
+}
+
+// nullableString returns a SQL NullString value driver-friendly: empty
+// string becomes NULL, non-empty becomes Valid.
+func nullableString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
+}
+
+// nullableInt64 maps 0 → NULL, non-zero → Valid.
+func nullableInt64(n int64) sql.NullInt64 {
+	if n == 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: n, Valid: true}
+}
+
+// nullableUnix maps a *time.Time into a SQL NullInt64 (unix seconds).
+func nullableUnix(t *time.Time) sql.NullInt64 {
+	if t == nil || t.IsZero() {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: t.Unix(), Valid: true}
 }
 
 func isUnique(err error) bool {

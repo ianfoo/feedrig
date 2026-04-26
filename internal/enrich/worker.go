@@ -121,8 +121,8 @@ func (w *Worker) process(ctx context.Context, videoID int64) {
 	}
 
 	in := summarize.Input{
-		Title:       v.Title.String,
-		Description: v.Description.String,
+		Title:       v.Title,
+		Description: v.Description,
 		Categories:  w.Categories,
 	}
 

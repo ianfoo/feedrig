@@ -141,7 +141,7 @@ Lightweight ADRs. Each entry: what, why, alternatives considered, status.
 5. Templates: drop `.Valid` and `.Int64` accessors; use plain field access with `{{with}}` for optionals.
 6. Optional: extract a repository interface so non-SQLite implementations are straightforward.
 
-**Status:** Deferred to v0.6 cleanup. ADR captured so the intent isn't lost.
+**Status:** ✅ shipped in v0.8. Domain types in `creator`, `video`, and `groups` use `string` (empty = unset), `int64` (0 = unset), and `*time.Time` (nil = unset) instead of `database/sql` types. SQL nullables are confined to `scanFoo` helpers and `nullableString`/`nullableInt64`/`nullableUnix` write helpers in each store package. `internal/web/templates/*` no longer reference `.Valid` / `.String` / `.Int64`. `humanTime` template helper extended to accept `*time.Time`. `video.ScanRow` exported so `groups.Feed` can produce domain values without duplicating scan logic.
 
 ---
 

@@ -17,7 +17,7 @@
         {{range .Rows}}
         <li>
             <a href="/videos/{{.Video.ID}}">
-                <div class="search-title">{{or .Video.Title.String "(untitled)"}}</div>
+                <div class="search-title">{{or .Video.Title "(untitled)"}}</div>
                 <div class="search-meta">
                     @{{.Creator}} · matched in <span class="match-field">{{.Hit.Field}}</span> · state: <span class="state-{{.Video.State}}">{{.Video.State}}</span>
                 </div>

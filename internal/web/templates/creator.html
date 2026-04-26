@@ -5,10 +5,10 @@
     <div class="row-between">
         <div>
             <h1>@{{.Creator.Handle}}</h1>
-            {{with .Creator.DisplayName.String}}<p class="dn">{{.}}</p>{{end}}
+            {{with .Creator.DisplayName}}<p class="dn">{{.}}</p>{{end}}
             <p class="meta">
-                {{if .Creator.LastFetchedAt.Valid}}Last fetched {{humanTime .Creator.LastFetchedAt.Int64}}{{else}}Never fetched{{end}}
-                {{if .Creator.FollowedAt.Valid}} · followed on IG {{humanTime .Creator.FollowedAt.Int64}}{{end}}
+                {{with .Creator.LastFetchedAt}}Last fetched {{humanTime .}}{{else}}Never fetched{{end}}
+                {{with .Creator.FollowedAt}} · followed on IG {{humanTime .}}{{end}}
             </p>
             {{if .TopTags}}
             <p class="meta">Topics:
@@ -37,7 +37,7 @@
         <summary>Polling cadence</summary>
         <p class="hint">Override the global poll interval for this creator. Empty (or 0) clears the override and reverts to the default.</p>
         <form method="post" action="/creators/{{.Creator.ID}}/cadence" class="inline-form">
-            <input type="number" name="poll_hours" min="0" max="168" value="{{if .Creator.PollIntervalSeconds.Valid}}{{pollHours .Creator.PollIntervalSeconds.Int64}}{{end}}" placeholder="hours">
+            <input type="number" name="poll_hours" min="0" max="168" value="{{if gt .Creator.PollIntervalSeconds 0}}{{pollHours .Creator.PollIntervalSeconds}}{{end}}" placeholder="hours">
             <button type="submit">Save</button>
         </form>
     </details>
@@ -49,16 +49,16 @@
         {{range .Rows}}
         <li class="video-card {{if .IsLastWatch}}last-watched{{end}} state-{{.Video.State}}">
             <a href="/videos/{{.Video.ID}}">
-                {{if .Video.ThumbnailPath.Valid}}
+                {{if .Video.ThumbnailPath}}
                 <div class="thumb"><img src="{{thumbURL .Video}}" alt=""></div>
                 {{else}}
                 <div class="thumb thumb-empty"></div>
                 {{end}}
                 <div class="card-body">
-                    <div class="card-title">{{or .Video.Title.String "(untitled)"}}</div>
+                    <div class="card-title">{{or .Video.Title "(untitled)"}}</div>
                     <div class="card-meta">
-                        {{if .Video.PostedAt.Valid}}{{humanTime .Video.PostedAt.Int64}}{{else}}{{humanTime .Video.DownloadedAt}}{{end}}
-                        {{with duration .Video.DurationSeconds.Int64}} · {{.}}{{end}}
+                        {{if .Video.PostedAt}}{{humanTime .Video.PostedAt}}{{else}}{{humanTime .Video.DownloadedAt}}{{end}}
+                        {{with duration .Video.DurationSeconds}} · {{.}}{{end}}
                     </div>
                     {{if .IsLastWatch}}<div class="badge">last watched</div>{{end}}
                     {{if eq (printf "%s" .Video.State) "saved"}}<div class="badge badge-saved">saved</div>{{end}}

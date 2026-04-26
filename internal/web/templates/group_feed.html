@@ -49,15 +49,15 @@
         {{range .Rows}}
         <li class="video-card state-{{.Video.State}}">
             <a href="/videos/{{.Video.ID}}">
-                {{if .Video.ThumbnailPath.Valid}}
+                {{if .Video.ThumbnailPath}}
                 <div class="thumb"><img src="{{thumbURL .Video}}" alt=""></div>
                 {{else}}
                 <div class="thumb thumb-empty"></div>
                 {{end}}
                 <div class="card-body">
-                    <div class="card-title">{{or .Video.Title.String "(untitled)"}}</div>
+                    <div class="card-title">{{or .Video.Title "(untitled)"}}</div>
                     <div class="card-meta">
-                        @{{.Creator}} · {{if .Video.PostedAt.Valid}}{{humanTime .Video.PostedAt.Int64}}{{else}}{{humanTime .Video.DownloadedAt}}{{end}}
+                        @{{.Creator}} · {{if .Video.PostedAt}}{{humanTime .Video.PostedAt}}{{else}}{{humanTime .Video.DownloadedAt}}{{end}}
                     </div>
                     {{if .Tags}}
                     <div class="tag-row tight">

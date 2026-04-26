@@ -65,10 +65,10 @@ func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, s
 	}
 	tpl, err := template.New("").Funcs(funcMap).Funcs(template.FuncMap{
 		"thumbURL": func(v video.Video) string {
-			if !v.ThumbnailPath.Valid {
+			if v.ThumbnailPath == "" {
 				return ""
 			}
-			key := storage.KeyFor(srv.mediaRoot, v.ThumbnailPath.String)
+			key := storage.KeyFor(srv.mediaRoot, v.ThumbnailPath)
 			if key == "" {
 				return ""
 			}
@@ -495,8 +495,8 @@ func (s *Server) player(w http.ResponseWriter, r *http.Request) {
 
 	mediaURL := s.publicURL(v.FilePath)
 	thumbURL := ""
-	if v.ThumbnailPath.Valid {
-		thumbURL = s.publicURL(v.ThumbnailPath.String)
+	if v.ThumbnailPath != "" {
+		thumbURL = s.publicURL(v.ThumbnailPath)
 	}
 
 	s.render(w, "player.html", map[string]any{
@@ -1140,6 +1140,11 @@ var funcMap = template.FuncMap{
 		switch v := t.(type) {
 		case time.Time:
 			tt = v
+		case *time.Time:
+			if v == nil {
+				return ""
+			}
+			tt = *v
 		case int64:
 			tt = time.Unix(v, 0)
 		default:

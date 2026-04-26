@@ -259,8 +259,8 @@ func (s *Server) toolGetVideo(ctx context.Context, id, raw json.RawMessage) *rpc
 	}
 	out := map[string]any{
 		"id":          v.ID,
-		"title":       v.Title.String,
-		"description": v.Description.String,
+		"title":       v.Title,
+		"description": v.Description,
 		"url":         v.URL,
 		"state":       string(v.State),
 		"creator":     "",
@@ -270,8 +270,8 @@ func (s *Server) toolGetVideo(ctx context.Context, id, raw json.RawMessage) *rpc
 	if c != nil {
 		out["creator"] = c.Handle
 	}
-	if v.PostedAt.Valid {
-		out["posted_at"] = v.PostedAt.Int64
+	if v.PostedAt != nil {
+		out["posted_at"] = v.PostedAt.Unix()
 	}
 	if summary != nil {
 		out["summary"] = summary.Summary
@@ -298,10 +298,7 @@ func (s *Server) toolListCreators(ctx context.Context, id json.RawMessage) *rpcR
 	}
 	rows := make([]out, len(cs))
 	for i, c := range cs {
-		row := out{ID: c.ID, Handle: c.Handle}
-		if c.DisplayName.Valid {
-			row.DisplayName = c.DisplayName.String
-		}
+		row := out{ID: c.ID, Handle: c.Handle, DisplayName: c.DisplayName}
 		if tcs, _ := s.Enrich.TopTagsForCreator(ctx, c.ID, 5); len(tcs) > 0 {
 			row.TopTags = make([]string, len(tcs))
 			for j, t := range tcs {

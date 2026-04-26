@@ -90,8 +90,8 @@ func (s *Scheduler) spawn() {
 	for _, c := range creators {
 		c := c
 		interval := defaultInt
-		if c.PollIntervalSeconds.Valid && c.PollIntervalSeconds.Int64 > 0 {
-			interval = time.Duration(c.PollIntervalSeconds.Int64) * time.Second
+		if c.PollIntervalSeconds > 0 {
+			interval = time.Duration(c.PollIntervalSeconds) * time.Second
 		}
 		s.wg.Add(1)
 		go s.runOne(ctx, c, interval)

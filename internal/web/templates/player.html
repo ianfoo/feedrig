@@ -1,4 +1,4 @@
-{{template "head" (dict "Title" (or .Video.Title.String "video") "Crumb" (printf "@%s" .Creator.Handle) "Script" "/static/player.js")}}
+{{template "head" (dict "Title" (or .Video.Title "video") "Crumb" (printf "@%s" .Creator.Handle) "Script" "/static/player.js")}}
 
 <section class="player-shell"
         data-video-id="{{.Video.ID}}"
@@ -36,11 +36,11 @@
     </div>
 
     <section class="meta-panel">
-        <h2>{{or .Video.Title.String "(untitled)"}}</h2>
+        <h2>{{or .Video.Title "(untitled)"}}</h2>
         <p class="meta">
             <a href="{{.Video.URL}}" target="_blank" rel="noopener">on instagram</a>
-            · {{if .Video.PostedAt.Valid}}posted {{humanTime .Video.PostedAt.Int64}}{{else}}downloaded {{humanTime .Video.DownloadedAt}}{{end}}
-            {{with duration .Video.DurationSeconds.Int64}} · {{.}}{{end}}
+            · {{if .Video.PostedAt}}posted {{humanTime .Video.PostedAt}}{{else}}downloaded {{humanTime .Video.DownloadedAt}}{{end}}
+            {{with duration .Video.DurationSeconds}} · {{.}}{{end}}
         </p>
         {{if .Tags}}
         <div class="tag-row">
@@ -55,7 +55,7 @@
             <p class="meta tiny">{{.Summary.Model}} · {{humanTime .Summary.GeneratedAt}}</p>
         </div>
         {{end}}
-        {{with .Video.Description.String}}<details class="description-block"><summary>Original caption</summary><p class="description">{{.}}</p></details>{{end}}
+        {{with .Video.Description}}<details class="description-block"><summary>Original caption</summary><p class="description">{{.}}</p></details>{{end}}
         <p class="hint">Keyboard: <kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> prev/next video · <kbd>J</kbd>/<kbd>L</kbd> seek 5s · <kbd>1</kbd>–<kbd>7</kbd> speed</p>
     </section>
 </section>

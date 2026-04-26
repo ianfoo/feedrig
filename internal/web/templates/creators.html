@@ -55,20 +55,20 @@
     {{if .Creators}}
     <ul class="creator-list" id="creator-list">
         {{range .Creators}}
-        <li data-handle="{{.Handle}}" data-name="{{.DisplayName.String}}">
+        <li data-handle="{{.Handle}}" data-name="{{.DisplayName}}">
             <div class="creator-row">
                 <a href="/creators/{{.ID}}" class="creator-link">
                     <span class="handle">@{{.Handle}}</span>
-                    {{with .DisplayName.String}}<span class="dn">{{.}}</span>{{end}}
+                    {{with .DisplayName}}<span class="dn">{{.}}</span>{{end}}
                 </a>
                 <span class="meta">
-                    {{if .FollowedAt.Valid}}followed {{humanTime .FollowedAt.Int64}} · {{end}}
-                    {{if .LastFetchedAt.Valid}}fetched {{humanTime .LastFetchedAt.Int64}}{{else}}never fetched{{end}}
+                    {{with .FollowedAt}}followed {{humanTime .}} · {{end}}
+                    {{with .LastFetchedAt}}fetched {{humanTime .}}{{else}}never fetched{{end}}
                 </span>
                 <details class="row-actions">
                     <summary>⋯</summary>
                     <form method="post" action="/creators/{{.ID}}/update" class="inline-form">
-                        <input name="display_name" value="{{.DisplayName.String}}" placeholder="display name">
+                        <input name="display_name" value="{{.DisplayName}}" placeholder="display name">
                         <button type="submit">Save</button>
                     </form>
                     <form method="post" action="/creators/{{.ID}}/delete" onsubmit="return confirm('Remove @{{.Handle}}? Their downloaded videos remain (cascade delete is off).')">
