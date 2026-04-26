@@ -18,6 +18,7 @@ type Creator struct {
 	AddedAt             time.Time
 	LastFetchedAt       sql.NullInt64
 	PollIntervalSeconds sql.NullInt64
+	FollowedAt          sql.NullInt64 // unix seconds, from IG data-export import
 }
 
 func (c Creator) LastFetched() (time.Time, bool) {
@@ -69,6 +70,7 @@ const (
 	SortHandle      SortOrder = "handle"
 	SortAdded       SortOrder = "added"
 	SortLastFetched SortOrder = "last_fetched"
+	SortFollowed    SortOrder = "followed" // most recently followed on IG first
 )
 
 func (s *Store) List(ctx context.Context, order SortOrder) ([]Creator, error) {
@@ -79,9 +81,12 @@ func (s *Store) List(ctx context.Context, order SortOrder) ([]Creator, error) {
 	case SortLastFetched:
 		// NULL last_fetched_at sorts at the end.
 		orderBy = "last_fetched_at IS NULL, last_fetched_at DESC"
+	case SortFollowed:
+		// NULL followed_at sorts at the end (manually-added creators).
+		orderBy = "followed_at IS NULL, followed_at DESC"
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, handle, display_name, profile_url, added_at, last_fetched_at, poll_interval_seconds FROM creators ORDER BY `+orderBy,
+		`SELECT id, handle, display_name, profile_url, added_at, last_fetched_at, poll_interval_seconds, followed_at FROM creators ORDER BY `+orderBy,
 	)
 	if err != nil {
 		return nil, err
@@ -91,7 +96,7 @@ func (s *Store) List(ctx context.Context, order SortOrder) ([]Creator, error) {
 	for rows.Next() {
 		var c Creator
 		var added int64
-		if err := rows.Scan(&c.ID, &c.Handle, &c.DisplayName, &c.ProfileURL, &added, &c.LastFetchedAt, &c.PollIntervalSeconds); err != nil {
+		if err := rows.Scan(&c.ID, &c.Handle, &c.DisplayName, &c.ProfileURL, &added, &c.LastFetchedAt, &c.PollIntervalSeconds, &c.FollowedAt); err != nil {
 			return nil, err
 		}
 		c.AddedAt = time.Unix(added, 0)
@@ -104,9 +109,9 @@ func (s *Store) Get(ctx context.Context, id int64) (*Creator, error) {
 	var c Creator
 	var added int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, handle, display_name, profile_url, added_at, last_fetched_at, poll_interval_seconds FROM creators WHERE id = ?`,
+		`SELECT id, handle, display_name, profile_url, added_at, last_fetched_at, poll_interval_seconds, followed_at FROM creators WHERE id = ?`,
 		id,
-	).Scan(&c.ID, &c.Handle, &c.DisplayName, &c.ProfileURL, &added, &c.LastFetchedAt, &c.PollIntervalSeconds)
+	).Scan(&c.ID, &c.Handle, &c.DisplayName, &c.ProfileURL, &added, &c.LastFetchedAt, &c.PollIntervalSeconds, &c.FollowedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -137,6 +142,62 @@ func (s *Store) UpdateDisplayName(ctx context.Context, id int64, name string) er
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE creators SET display_name = ? WHERE id = ?`, dn, id)
 	return err
+}
+
+// SetPollIntervalSeconds sets the per-creator polling cadence override. Pass
+// 0 (or negative) to clear the override and revert to the global default.
+func (s *Store) SetPollIntervalSeconds(ctx context.Context, id int64, seconds int64) error {
+	if seconds <= 0 {
+		_, err := s.db.ExecContext(ctx, `UPDATE creators SET poll_interval_seconds = NULL WHERE id = ?`, id)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE creators SET poll_interval_seconds = ? WHERE id = ?`,
+		seconds, id,
+	)
+	return err
+}
+
+// ImportEntry is one record from an Instagram data-export following.json.
+type ImportEntry struct {
+	Handle     string
+	FollowedAt time.Time // zero if unknown
+}
+
+// ImportFollowing inserts (or upserts the followed_at on existing rows)
+// each entry. Returns counts. Used by the data-export importer.
+func (s *Store) ImportFollowing(ctx context.Context, entries []ImportEntry) (added, updated int, failures []BulkFailure) {
+	for _, e := range entries {
+		handle := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(e.Handle, "@")))
+		if handle == "" {
+			continue
+		}
+		profileURL := "https://www.instagram.com/" + handle + "/"
+		var followedAt sql.NullInt64
+		if !e.FollowedAt.IsZero() {
+			followedAt = sql.NullInt64{Int64: e.FollowedAt.Unix(), Valid: true}
+		}
+		now := time.Now().Unix()
+		res, err := s.db.ExecContext(ctx, `
+			INSERT INTO creators(handle, profile_url, added_at, followed_at) VALUES(?, ?, ?, ?)
+			ON CONFLICT(handle) DO UPDATE SET followed_at = COALESCE(excluded.followed_at, creators.followed_at)
+		`, handle, profileURL, now, followedAt)
+		if err != nil {
+			failures = append(failures, BulkFailure{Input: handle, Err: err.Error()})
+			continue
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			// Could be insert or update; differentiate via a quick lookup.
+			var existingAdded int64
+			_ = s.db.QueryRowContext(ctx, `SELECT added_at FROM creators WHERE handle = ?`, handle).Scan(&existingAdded)
+			if existingAdded == now {
+				added++
+			} else {
+				updated++
+			}
+		}
+	}
+	return
 }
 
 // BulkAddResult summarizes a bulk-add operation. Errors per line so the

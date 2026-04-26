@@ -27,6 +27,14 @@
             <button type="submit">Fetch this post</button>
         </form>
     </details>
+    <details>
+        <summary>Polling cadence</summary>
+        <p class="hint">Override the global poll interval for this creator. Empty (or 0) clears the override and reverts to the default.</p>
+        <form method="post" action="/creators/{{.Creator.ID}}/cadence" class="inline-form">
+            <input type="number" name="poll_hours" min="0" max="168" value="{{if .Creator.PollIntervalSeconds.Valid}}{{pollHours .Creator.PollIntervalSeconds.Int64}}{{end}}" placeholder="hours">
+            <button type="submit">Save</button>
+        </form>
+    </details>
 </section>
 
 <section class="panel">

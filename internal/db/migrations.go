@@ -40,6 +40,10 @@ var migrations = []string{
 		PRIMARY KEY(group_id, creator_id)
 	);
 	CREATE INDEX idx_group_creator_memberships_creator ON group_creator_memberships(creator_id);`,
+	// 4 (v0.6): track when each creator was followed on Instagram. Populated
+	// by the data-export following.json import; null for manually-added
+	// creators (we use added_at for those).
+	`ALTER TABLE creators ADD COLUMN followed_at INTEGER;`,
 }
 
 func applyMigrations(conn *sql.DB) error {

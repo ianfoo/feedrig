@@ -223,9 +223,25 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 
 ---
 
-## v0.6 — Onboarding, native shell, hosted (planned)
+## v0.6 — In progress (rolling)
 
-**Status:** ⏳ planned. Lots of ideas; bullets are unprioritized.
+**Status:** 🚧 in progress. Items below tick off as they ship; remainder lives in the unprioritized backlog at the bottom.
+
+### Shipped this session
+
+- [x] **Schema migration 4**: `creators.followed_at` (when each creator was followed on Instagram, populated from data export).
+- [x] **Instagram data-export import** (`POST /creators/import`): parses `following.json` (both object and array forms) and bulk-creates / updates creators with their follow timestamps. New "Sort: followed (IG)" option on the creators list. Exposed in the creators page under a "Import from Instagram data export" disclosure.
+- [x] **Per-creator cadence override UI** on the creator detail page (`POST /creators/{id}/cadence`). Empty / 0 clears the override.
+- [x] **Smart-playlist filter polish**: watched / unwatched / any chips on the group feed; advanced-filter form for min/max duration (seconds) and item cap. New `WatchedFilter`, `MinDuration`, `MaxDuration` fields on `groups.FeedQuery`.
+- [x] **Corpus search** (`/search?q=`): SQL `LIKE` across video title, description, summary, and transcript with one-result-per-video deduplication and ~160-char excerpts. Shipped as the building block both for the in-app search UI and for a future MCP server (which is now just a thin protocol shell over `enrich.Store.Search`).
+- [x] **Scheduler hot-reload**: `Scheduler.Reload()` cancels per-creator workers and respawns from a fresh DB read. Wired into the add / bulk-add / import / delete / cadence handlers via a small `SchedulerReloader` interface, so changes take effect without a server restart. Cadence-page hint updated.
+
+### Smoke-tested end-to-end
+
+- Following.json (object form) imported 3 creators with timestamps; sort=followed orders them recent-first ✅
+- Per-creator cadence: 2h override stored as `7200` seconds; cleared back to NULL ✅
+- Search "slap" matches title; "polling" matches transcript ✅
+- Group feed: watched=yes returns only the watched video; watched=no returns only the unwatched; min=60 hides the 45s clip ✅
 
 ### From the user mid-v0.5 / v0.5.1
 
@@ -253,6 +269,18 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 - Wire all media reads/writes through `storage.Blob` so swapping `LocalFS` ↔ `S3` is a config change.
 - Real S3 impl using `aws-sdk-go-v2`, with Cloudflare R2 / MinIO compatibility tested.
 - Optional auth (single-user session cookie) once the binary leaves localhost.
+
+### Storage growth control
+
+- **Metadata TTL on archived rows.** Today archived videos persist forever. A second-stage TTL ("hard-purge metadata after N days, default ~365") would cap growth. Rough storage math per archived row:
+    - thumbnail JPEG: ~30 KB
+    - summary + notes (text): ~1–2 KB
+    - transcript (text, 60s reel): ~2–5 KB
+    - row metadata (title/desc/etc.): ~1 KB
+    - **per row: ~35–40 KB**
+  - 50 creators × 30 posts/yr × 1 yr ≈ 50 MB. Fine.
+  - 200 creators × 100 posts/yr × 5 yrs ≈ 3.5 GB. Probably fine, getting noticeable.
+  - Add a `metadata_ttl_days` setting + a second sweep pass; default ~365 (or 0 = unlimited). Surface in the settings page.
 
 ### Smaller follow-ups
 

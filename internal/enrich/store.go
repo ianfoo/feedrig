@@ -212,3 +212,115 @@ func nullableString(s string) any {
 	}
 	return s
 }
+
+// SearchHit is one row of a corpus search result.
+type SearchHit struct {
+	VideoID   int64
+	Field     string // "title" | "description" | "summary" | "transcript"
+	Excerpt   string // ~160 chars around the first match
+	Title     string
+	CreatorID int64
+}
+
+// Search performs a case-insensitive substring match across video title,
+// description, summary, and transcript. SQL LIKE is used directly — for the
+// expected corpus size of a personal tool (low thousands of rows) this is
+// fast enough; FTS5 is the queued upgrade if it ever isn't.
+func (s *Store) Search(ctx context.Context, query string, limit int) ([]SearchHit, error) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	pattern := "%" + escapeLike(q) + "%"
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT v.id, v.creator_id, COALESCE(v.title,'') AS title,
+		       'title' AS field, COALESCE(v.title,'') AS excerpt
+		  FROM videos v
+		 WHERE v.title LIKE ? ESCAPE '\'
+		UNION ALL
+		SELECT v.id, v.creator_id, COALESCE(v.title,''), 'description',
+		       COALESCE(v.description,'')
+		  FROM videos v
+		 WHERE v.description LIKE ? ESCAPE '\'
+		UNION ALL
+		SELECT v.id, v.creator_id, COALESCE(v.title,''), 'summary', s.summary
+		  FROM videos v JOIN summaries s ON s.video_id = v.id
+		 WHERE s.summary LIKE ? ESCAPE '\'
+		UNION ALL
+		SELECT v.id, v.creator_id, COALESCE(v.title,''), 'transcript', t.text
+		  FROM videos v JOIN transcripts t ON t.video_id = v.id
+		 WHERE t.text LIKE ? ESCAPE '\'
+		LIMIT ?
+	`, pattern, pattern, pattern, pattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SearchHit
+	seen := map[int64]bool{} // dedupe per video — first hit wins
+	needle := strings.ToLower(q)
+	for rows.Next() {
+		var h SearchHit
+		var raw string
+		if err := rows.Scan(&h.VideoID, &h.CreatorID, &h.Title, &h.Field, &raw); err != nil {
+			return nil, err
+		}
+		if seen[h.VideoID] {
+			continue
+		}
+		seen[h.VideoID] = true
+		h.Excerpt = excerpt(raw, needle, 160)
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// escapeLike escapes the SQL LIKE wildcard chars (%, _) and the escape char
+// itself so user input can't accidentally match more broadly.
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
+}
+
+// excerpt returns ~window chars centered on the first occurrence of needle
+// inside hay, with leading/trailing ellipses if the source extends beyond.
+func excerpt(hay, needle string, window int) string {
+	if hay == "" {
+		return ""
+	}
+	low := strings.ToLower(hay)
+	idx := strings.Index(low, needle)
+	if idx < 0 {
+		// Shouldn't happen since the SQL matched; just return the head.
+		if len(hay) > window {
+			return hay[:window] + "…"
+		}
+		return hay
+	}
+	half := window / 2
+	start := idx - half
+	if start < 0 {
+		start = 0
+	}
+	end := start + window
+	if end > len(hay) {
+		end = len(hay)
+		start = end - window
+		if start < 0 {
+			start = 0
+		}
+	}
+	out := hay[start:end]
+	if start > 0 {
+		out = "…" + out
+	}
+	if end < len(hay) {
+		out = out + "…"
+	}
+	return out
+}

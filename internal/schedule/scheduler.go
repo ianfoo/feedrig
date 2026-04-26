@@ -13,17 +13,21 @@ import (
 	"github.com/ianfoo/feedrig/internal/settings"
 )
 
-// Scheduler launches one polling goroutine per creator. It is safe to
-// restart on creator add / delete by replacing the *Scheduler value; in v0.3
-// we don't yet do hot-reload — a server restart picks up newly-added
-// creators. (TODO v0.3.x: subscribe to creator add/delete events.)
+// Scheduler launches one polling goroutine per creator. v0.6 adds hot
+// reload: handlers that mutate the creator set (add, delete, cadence
+// override) call Reload(), which cancels the existing per-creator workers
+// and respawns from the current DB state. The reload is a stop-the-world
+// operation but takes milliseconds — fine for the single-user model.
 type Scheduler struct {
 	Creators *creator.Store
 	Settings *settings.Store
 	Ingest   *ingest.Service
 	Log      *slog.Logger
 
-	wg sync.WaitGroup
+	mu      sync.Mutex
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	rootCtx context.Context
 }
 
 func (s *Scheduler) log() *slog.Logger {
@@ -33,10 +37,50 @@ func (s *Scheduler) log() *slog.Logger {
 	return slog.Default()
 }
 
-// Run launches a goroutine per creator and blocks until ctx is canceled.
-// Each goroutine waits a randomized fraction of its interval before its
-// first run to avoid a thundering-herd burst on startup.
-func (s *Scheduler) Run(ctx context.Context) {
+// Run blocks until rootCtx (the parent passed to Run) is canceled. Internally
+// it spawns the per-creator workers; Reload() cancels and respawns them.
+func (s *Scheduler) Run(rootCtx context.Context) {
+	s.mu.Lock()
+	s.rootCtx = rootCtx
+	s.mu.Unlock()
+	s.spawn()
+	<-rootCtx.Done()
+	s.mu.Lock()
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.mu.Unlock()
+	s.wg.Wait()
+}
+
+// Reload cancels the current per-creator workers and respawns from a fresh
+// DB read. Idempotent and safe to call from any goroutine.
+func (s *Scheduler) Reload() {
+	s.mu.Lock()
+	if s.rootCtx == nil {
+		// Run hasn't been called yet; nothing to reload.
+		s.mu.Unlock()
+		return
+	}
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.mu.Unlock()
+	s.wg.Wait()
+	s.spawn()
+}
+
+func (s *Scheduler) spawn() {
+	s.mu.Lock()
+	rootCtx := s.rootCtx
+	if rootCtx == nil {
+		s.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(rootCtx)
+	s.cancel = cancel
+	s.mu.Unlock()
+
 	creators, err := s.Creators.List(ctx, creator.SortHandle)
 	if err != nil {
 		s.log().Error("scheduler: load creators", "err", err)
@@ -52,8 +96,6 @@ func (s *Scheduler) Run(ctx context.Context) {
 		s.wg.Add(1)
 		go s.runOne(ctx, c, interval)
 	}
-	<-ctx.Done()
-	s.wg.Wait()
 }
 
 func (s *Scheduler) runOne(ctx context.Context, c creator.Creator, interval time.Duration) {

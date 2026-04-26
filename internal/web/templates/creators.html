@@ -6,8 +6,9 @@
         <h1>Creators</h1>
         <nav class="sort-nav">
             <span class="label">Sort</span>
-            <a href="/creators?sort=handle"      class="{{if eq .Sort "handle"}}active{{end}}">name</a>
-            <a href="/creators?sort=added"       class="{{if eq .Sort "added"}}active{{end}}">added</a>
+            <a href="/creators?sort=handle"       class="{{if eq .Sort "handle"}}active{{end}}">name</a>
+            <a href="/creators?sort=added"        class="{{if eq .Sort "added"}}active{{end}}">added</a>
+            <a href="/creators?sort=followed"     class="{{if eq .Sort "followed"}}active{{end}}">followed (IG)</a>
             <a href="/creators?sort=last_fetched" class="{{if eq .Sort "last_fetched"}}active{{end}}">last fetched</a>
         </nav>
     </div>
@@ -31,6 +32,18 @@
             </div>
         </form>
     </details>
+
+    <details class="bulk-form">
+        <summary>Import from Instagram data export (following.json)</summary>
+        <p class="hint">In Instagram → Settings → Accounts Center → Your information and permissions → Download your information → request the JSON export. Inside the zip, find <code>connections/followers_and_following/following.json</code> and upload it here. Followed-on dates are imported when present, so you can sort by recency.</p>
+        <form method="post" action="/creators/import" enctype="multipart/form-data">
+            <label class="file-label">
+                <input type="file" name="file" accept=".json,application/json" required>
+                <span>following.json</span>
+            </label>
+            <button type="submit" class="primary">Import</button>
+        </form>
+    </details>
 </section>
 
 <section class="panel">
@@ -49,6 +62,7 @@
                     {{with .DisplayName.String}}<span class="dn">{{.}}</span>{{end}}
                 </a>
                 <span class="meta">
+                    {{if .FollowedAt.Valid}}followed {{humanTime .FollowedAt.Int64}} · {{end}}
                     {{if .LastFetchedAt.Valid}}fetched {{humanTime .LastFetchedAt.Int64}}{{else}}never fetched{{end}}
                 </span>
                 <details class="row-actions">

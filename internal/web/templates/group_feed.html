@@ -17,8 +17,26 @@
     <nav class="filter-row">
         <a href="/groups/{{.Group.Slug}}" class="{{if not .OnlyUnseen}}active{{end}}">All</a>
         <a href="/groups/{{.Group.Slug}}?unseen=1" class="{{if .OnlyUnseen}}active{{end}}">Unseen since last visit</a>
+        <span class="filter-sep">·</span>
+        <a href="/groups/{{.Group.Slug}}{{if .OnlyUnseen}}?unseen=1{{end}}" class="{{if eq .WatchedFilter ""}}active{{end}}">Any</a>
+        <a href="/groups/{{.Group.Slug}}?watched=no{{if .OnlyUnseen}}&unseen=1{{end}}" class="{{if eq .WatchedFilter "no"}}active{{end}}">Unwatched</a>
+        <a href="/groups/{{.Group.Slug}}?watched=yes{{if .OnlyUnseen}}&unseen=1{{end}}" class="{{if eq .WatchedFilter "yes"}}active{{end}}">Watched</a>
         {{with .ActiveTag}}<span class="tag-active">tag: {{.}}</span><a href="/groups/{{$.Group.Slug}}{{if $.OnlyUnseen}}?unseen=1{{end}}" class="clear-link">clear</a>{{end}}
     </nav>
+
+    <details class="advanced-filter">
+        <summary>Advanced filters</summary>
+        <form method="get" action="/groups/{{.Group.Slug}}" class="inline-form">
+            <input type="number" name="min" min="0" value="{{if .MinDuration}}{{.MinDuration}}{{end}}" placeholder="min seconds">
+            <input type="number" name="max" min="0" value="{{if .MaxDuration}}{{.MaxDuration}}{{end}}" placeholder="max seconds">
+            <input type="number" name="limit" min="0" value="{{if .Limit}}{{.Limit}}{{end}}" placeholder="cap (count)">
+            {{if .OnlyUnseen}}<input type="hidden" name="unseen" value="1">{{end}}
+            {{with .WatchedFilter}}<input type="hidden" name="watched" value="{{.}}">{{end}}
+            {{with .ActiveTag}}<input type="hidden" name="tag" value="{{.}}">{{end}}
+            <button type="submit">Apply</button>
+            <a class="nav-btn" href="/groups/{{.Group.Slug}}">Reset</a>
+        </form>
+    </details>
 </section>
 
 <section class="panel">

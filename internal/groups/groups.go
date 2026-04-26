@@ -194,13 +194,25 @@ func (s *Store) Members(ctx context.Context, groupID int64) ([]Membership, error
 
 // Feed ---------------------------------------------------------------
 
+// WatchedFilter narrows a feed by per-video watched state.
+type WatchedFilter string
+
+const (
+	WatchedAny       WatchedFilter = ""          // no filter
+	WatchedOnly      WatchedFilter = "watched"   // only videos marked watched
+	WatchedUnwatched WatchedFilter = "unwatched" // only videos NOT marked watched
+)
+
 // FeedQuery customizes a smart-playlist read. UI surfaces these as filter
 // chips so the user can narrow within a group without redefining it.
 type FeedQuery struct {
-	OnlyUnseen bool     // limit to videos posted after group.last_visited_at
-	OnlyNew    bool     // alias for OnlyUnseen
-	TagsAny    []string // additional category narrowing (must match at least one)
-	Limit      int      // 0 = no limit
+	OnlyUnseen   bool          // limit to videos posted after group.last_visited_at
+	OnlyNew      bool          // alias for OnlyUnseen
+	TagsAny      []string      // additional category narrowing (must match at least one)
+	Watched      WatchedFilter // per-video watched-state filter
+	MinDuration  int           // seconds; 0 = no minimum
+	MaxDuration  int           // seconds; 0 = no maximum
+	Limit        int           // 0 = no limit
 }
 
 // Feed returns the videos that match the group's definition + the optional
@@ -241,6 +253,22 @@ func (s *Store) Feed(ctx context.Context, g *Group, q FeedQuery) ([]video.Video,
 		for _, t := range g.ExcludeTags {
 			args = append(args, t)
 		}
+	}
+
+	switch q.Watched {
+	case WatchedOnly:
+		sb.WriteString(` AND EXISTS (SELECT 1 FROM watch_state w WHERE w.video_id = v.id AND w.watched = 1)`)
+	case WatchedUnwatched:
+		sb.WriteString(` AND NOT EXISTS (SELECT 1 FROM watch_state w WHERE w.video_id = v.id AND w.watched = 1)`)
+	}
+
+	if q.MinDuration > 0 {
+		sb.WriteString(` AND COALESCE(v.duration_seconds, 0) >= ?`)
+		args = append(args, q.MinDuration)
+	}
+	if q.MaxDuration > 0 {
+		sb.WriteString(` AND COALESCE(v.duration_seconds, 0) > 0 AND v.duration_seconds <= ?`)
+		args = append(args, q.MaxDuration)
 	}
 
 	sb.WriteString(` ORDER BY COALESCE(v.posted_at, v.downloaded_at) DESC, v.id DESC`)

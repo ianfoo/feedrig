@@ -106,6 +106,7 @@ func main() {
 		Ingest:   ingestSvc,
 		Log:      log,
 	}
+	srv.SetScheduler(scheduler)
 	go scheduler.Run(ctx)
 
 	sweeper := &ttl.Sweeper{

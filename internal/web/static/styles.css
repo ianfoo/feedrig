@@ -293,6 +293,22 @@ button.danger:hover { background: var(--danger); color: #1a0808; }
 .filter-row a.active { background: var(--accent); color: #0b1220; }
 .filter-row a:hover { text-decoration: none; background: var(--panel-2); }
 .filter-row a.active:hover { background: var(--accent); }
+.filter-sep { color: var(--fg-dim); margin: 0 0.2rem; }
+.advanced-filter { margin-top: 0.6rem; }
+.advanced-filter summary { color: var(--fg-dim); cursor: pointer; user-select: none; padding: 0.3rem 0; }
+.advanced-filter input[type=number] { max-width: 8rem; }
+
+.search-list { list-style: none; padding: 0; margin: 0; }
+.search-list li { border-bottom: 1px solid var(--border); padding: 0.6rem 0; }
+.search-list li:last-child { border-bottom: none; }
+.search-list a { color: var(--fg); display: block; }
+.search-list a:hover { text-decoration: none; }
+.search-list a:hover .search-title { color: var(--accent); }
+.search-title { font-weight: 600; font-size: 1rem; }
+.search-meta { color: var(--fg-dim); font-size: 0.85rem; margin: 0.15rem 0; }
+.match-field { color: var(--accent); }
+.search-excerpt { color: var(--fg); margin-top: 0.25rem; font-size: 0.9rem; line-height: 1.45; }
+.search-list a:hover .search-excerpt { background: var(--panel-2); border-radius: 4px; padding: 0.2rem 0.4rem; }
 .card-summary { color: var(--fg-dim); font-size: 0.85rem; margin-top: 0.3rem; line-height: 1.35; max-height: 4em; overflow: hidden; }
 .member-list { list-style: none; padding: 0; margin: 0.5rem 0; }
 .member-list li { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }

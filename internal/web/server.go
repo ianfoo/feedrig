@@ -26,6 +26,13 @@ import (
 //go:embed templates/*.html static/*
 var assets embed.FS
 
+// SchedulerReloader is the small surface the web layer needs to nudge the
+// scheduler when creators or cadences change. Defined locally to avoid a
+// hard dependency on internal/schedule from internal/web.
+type SchedulerReloader interface {
+	Reload()
+}
+
 type Server struct {
 	creators  *creator.Store
 	videos    *video.Store
@@ -33,6 +40,7 @@ type Server struct {
 	settings  *settings.Store
 	groups    *groups.Store
 	ingest    *ingest.Service
+	scheduler SchedulerReloader
 	mediaRoot string
 	tpl       *template.Template
 	log       *slog.Logger
@@ -58,6 +66,18 @@ func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, s
 	return srv, nil
 }
 
+// SetScheduler wires the scheduler so creator-mutating handlers can hot-
+// reload it. Safe to leave unset; reloads simply become no-ops.
+func (s *Server) SetScheduler(r SchedulerReloader) { s.scheduler = r }
+
+// reload nudges the scheduler if one is wired. Errors are swallowed since a
+// missed reload only means the change takes effect on next restart.
+func (s *Server) reload() {
+	if s.scheduler != nil {
+		go s.scheduler.Reload()
+	}
+}
+
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
@@ -71,11 +91,13 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /creators", s.listCreators)
 	mux.HandleFunc("POST /creators", s.addCreator)
 	mux.HandleFunc("POST /creators/bulk", s.bulkAddCreators)
+	mux.HandleFunc("POST /creators/import", s.importFollowing)
 	mux.HandleFunc("GET /creators/{id}", s.creatorDetail)
 	mux.HandleFunc("GET /creators/{id}/history", s.creatorHistory)
 	mux.HandleFunc("POST /creators/{id}/fetch", s.fetchNew)
 	mux.HandleFunc("POST /creators/{id}/add-url", s.addByURL)
 	mux.HandleFunc("POST /creators/{id}/update", s.updateCreator)
+	mux.HandleFunc("POST /creators/{id}/cadence", s.updateCreatorCadence)
 	mux.HandleFunc("POST /creators/{id}/delete", s.deleteCreator)
 
 	mux.HandleFunc("GET /videos/{id}", s.player)
@@ -85,6 +107,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /videos/{id}/restore", s.restoreVideo)
 	mux.HandleFunc("POST /videos/{id}/redownload", s.redownloadVideo)
 
+	mux.HandleFunc("GET /search", s.searchPage)
 	mux.HandleFunc("GET /pending", s.pendingList)
 	mux.HandleFunc("GET /settings", s.settingsPage)
 	mux.HandleFunc("POST /settings", s.saveSettings)
@@ -139,6 +162,7 @@ func (s *Server) addCreator(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/creators?err="+escape(err.Error()), http.StatusFound)
 		return
 	}
+	s.reload()
 	http.Redirect(w, r, fmt.Sprintf("/creators/%d?flash=Added+%s", c.ID, c.Handle), http.StatusFound)
 }
 
@@ -170,6 +194,9 @@ func (s *Server) bulkAddCreators(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := s.creators.BulkAdd(r.Context(), content)
+	if len(res.Added) > 0 {
+		s.reload()
+	}
 	flash := fmt.Sprintf("Added %d, skipped %d, failed %d",
 		len(res.Added), len(res.Skipped), len(res.Failures))
 	http.Redirect(w, r, "/creators?flash="+escape(flash), http.StatusFound)
@@ -191,6 +218,57 @@ func (s *Server) updateCreator(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/creators/%d?flash=Updated", id), http.StatusFound)
 }
 
+func (s *Server) updateCreatorCadence(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.userError(w, "invalid form")
+		return
+	}
+	hours, _ := strconv.Atoi(r.FormValue("poll_hours"))
+	var seconds int64
+	if hours > 0 {
+		seconds = int64((time.Duration(hours) * time.Hour).Seconds())
+	}
+	if err := s.creators.SetPollIntervalSeconds(r.Context(), id, seconds); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.reload()
+	flash := "Cadence updated"
+	if seconds == 0 {
+		flash = "Cadence override cleared"
+	}
+	http.Redirect(w, r, fmt.Sprintf("/creators/%d?flash=%s", id, escape(flash)), http.StatusFound)
+}
+
+func (s *Server) importFollowing(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		http.Redirect(w, r, "/creators?err="+escape("Upload failed: "+err.Error()), http.StatusFound)
+		return
+	}
+	f, _, err := r.FormFile("file")
+	if err != nil {
+		http.Redirect(w, r, "/creators?err=Choose+a+following.json+to+upload", http.StatusFound)
+		return
+	}
+	defer f.Close()
+	entries, err := creator.ParseFollowingJSON(f)
+	if err != nil {
+		http.Redirect(w, r, "/creators?err="+escape("Parse failed: "+err.Error()), http.StatusFound)
+		return
+	}
+	added, updated, failures := s.creators.ImportFollowing(r.Context(), entries)
+	if added > 0 {
+		s.reload()
+	}
+	flash := fmt.Sprintf("Imported %d, updated %d, failed %d (parsed %d entries)",
+		added, updated, len(failures), len(entries))
+	http.Redirect(w, r, "/creators?sort=followed&flash="+escape(flash), http.StatusFound)
+}
+
 func (s *Server) deleteCreator(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathInt(w, r, "id")
 	if !ok {
@@ -200,6 +278,7 @@ func (s *Server) deleteCreator(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	s.reload()
 	http.Redirect(w, r, "/creators?flash=Removed+creator", http.StatusFound)
 }
 
@@ -490,6 +569,42 @@ func (s *Server) restoreVideo(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/pending?flash=Restored", http.StatusFound)
 }
 
+func (s *Server) searchPage(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	type row struct {
+		Video   video.Video
+		Creator string
+		Hit     enrich.SearchHit
+	}
+	var rows []row
+	if q != "" {
+		hits, err := s.enrich.Search(r.Context(), q, 100)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		creatorCache := map[int64]string{}
+		for _, h := range hits {
+			v, err := s.videos.Get(r.Context(), h.VideoID)
+			if err != nil {
+				continue
+			}
+			handle, ok := creatorCache[h.CreatorID]
+			if !ok {
+				if c, err := s.creators.Get(r.Context(), h.CreatorID); err == nil {
+					handle = c.Handle
+					creatorCache[h.CreatorID] = handle
+				}
+			}
+			rows = append(rows, row{Video: *v, Creator: handle, Hit: h})
+		}
+	}
+	s.render(w, "search.html", map[string]any{
+		"Query": q,
+		"Rows":  rows,
+	})
+}
+
 func (s *Server) pendingList(w http.ResponseWriter, r *http.Request) {
 	vids, err := s.videos.ListByState(r.Context(), video.StatePendingDeletion)
 	if err != nil {
@@ -579,6 +694,21 @@ func (s *Server) groupFeed(w http.ResponseWriter, r *http.Request) {
 	if t := r.URL.Query().Get("tag"); t != "" {
 		q.TagsAny = []string{strings.ToLower(t)}
 	}
+	switch r.URL.Query().Get("watched") {
+	case "yes":
+		q.Watched = groups.WatchedOnly
+	case "no":
+		q.Watched = groups.WatchedUnwatched
+	}
+	if minD, _ := strconv.Atoi(r.URL.Query().Get("min")); minD > 0 {
+		q.MinDuration = minD
+	}
+	if maxD, _ := strconv.Atoi(r.URL.Query().Get("max")); maxD > 0 {
+		q.MaxDuration = maxD
+	}
+	if limit, _ := strconv.Atoi(r.URL.Query().Get("limit")); limit > 0 {
+		q.Limit = limit
+	}
 
 	vids, err := s.groups.Feed(r.Context(), g, q)
 	if err != nil {
@@ -612,12 +742,16 @@ func (s *Server) groupFeed(w http.ResponseWriter, r *http.Request) {
 	_ = s.groups.MarkVisited(r.Context(), g.ID)
 
 	s.render(w, "group_feed.html", map[string]any{
-		"Group":      g,
-		"Rows":       rows,
-		"OnlyUnseen": q.OnlyUnseen,
-		"ActiveTag":  r.URL.Query().Get("tag"),
-		"Flash":      r.URL.Query().Get("flash"),
-		"Error":      r.URL.Query().Get("err"),
+		"Group":         g,
+		"Rows":          rows,
+		"OnlyUnseen":    q.OnlyUnseen,
+		"ActiveTag":     r.URL.Query().Get("tag"),
+		"WatchedFilter": r.URL.Query().Get("watched"),
+		"MinDuration":   q.MinDuration,
+		"MaxDuration":   q.MaxDuration,
+		"Limit":         q.Limit,
+		"Flash":         r.URL.Query().Get("flash"),
+		"Error":         r.URL.Query().Get("err"),
 	})
 }
 
@@ -884,6 +1018,9 @@ var funcMap = template.FuncMap{
 	},
 	"slice": func(items ...any) []any { return items },
 	"joinTags": func(tags []string) string { return strings.Join(tags, ", ") },
+	"pollHours": func(seconds int64) int64 {
+		return seconds / int64(time.Hour.Seconds())
+	},
 	"humanTime": func(t any) string {
 		var tt time.Time
 		switch v := t.(type) {
