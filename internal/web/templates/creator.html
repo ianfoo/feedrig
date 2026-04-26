@@ -8,7 +8,13 @@
             {{with .Creator.DisplayName.String}}<p class="dn">{{.}}</p>{{end}}
             <p class="meta">
                 {{if .Creator.LastFetchedAt.Valid}}Last fetched {{humanTime .Creator.LastFetchedAt.Int64}}{{else}}Never fetched{{end}}
+                {{if .Creator.FollowedAt.Valid}} · followed on IG {{humanTime .Creator.FollowedAt.Int64}}{{end}}
             </p>
+            {{if .TopTags}}
+            <p class="meta">Topics:
+                {{range .TopTags}}<a href="/groups?tag={{.Name}}" class="tag tag-link">{{.Name}} <span class="tag-count">{{.Count}}</span></a>{{end}}
+            </p>
+            {{end}}
         </div>
         <div class="creator-actions">
             <a class="nav-btn" href="/creators/{{.Creator.ID}}/history">History</a>

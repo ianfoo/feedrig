@@ -286,6 +286,8 @@ button.danger:hover { background: var(--danger); color: #1a0808; }
 .tag-row.tight { margin: 0.3rem 0 0; }
 .tag-link { color: var(--fg-dim); text-decoration: none; }
 .tag-link:hover { background: var(--accent); color: #0b1220; }
+.tag-count { background: rgba(255,255,255,0.08); border-radius: 8px; padding: 0 0.35rem; font-size: 0.7rem; margin-left: 0.25rem; }
+.tag-link:hover .tag-count { background: rgba(0,0,0,0.15); }
 .tag-active { background: var(--accent); color: #0b1220; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.82rem; }
 .clear-link { color: var(--fg-dim); margin-left: 0.4rem; font-size: 0.85rem; }
 .filter-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.6rem; }

@@ -235,6 +235,8 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 - [x] **Smart-playlist filter polish**: watched / unwatched / any chips on the group feed; advanced-filter form for min/max duration (seconds) and item cap. New `WatchedFilter`, `MinDuration`, `MaxDuration` fields on `groups.FeedQuery`.
 - [x] **Corpus search** (`/search?q=`): SQL `LIKE` across video title, description, summary, and transcript with one-result-per-video deduplication and ~160-char excerpts. Shipped as the building block both for the in-app search UI and for a future MCP server (which is now just a thin protocol shell over `enrich.Store.Search`).
 - [x] **Scheduler hot-reload**: `Scheduler.Reload()` cancels per-creator workers and respawns from a fresh DB read. Wired into the add / bulk-add / import / delete / cadence handlers via a small `SchedulerReloader` interface, so changes take effect without a server restart. Cadence-page hint updated.
+- [x] **Creator-level top-tags aggregation**: `enrich.Store.TopTagsForCreator(id, limit)` computes the most common tags across a creator's videos. Surfaced as a "Topics:" line with chips on the creator detail page (each chip shows the tag name + a count badge). Cheap content pre-categorization without re-running the LLM.
+- [x] **RSS per group**: `GET /groups/{slug}/rss` emits an RSS 2.0 feed (title = video title, description = summary if present else original caption, pubDate = posted_at) so any reader (NetNewsWire, Feedbin, etc.) can subscribe. RSS button added to the group feed header alongside Digest / Edit.
 
 ### Smoke-tested end-to-end
 

@@ -11,7 +11,11 @@
                 {{if .Group.ExcludeTags}} · except: {{range $i, $t := .Group.ExcludeTags}}{{if $i}}, {{end}}<span class="tag">{{$t}}</span>{{end}}{{end}}
             </p>
         </div>
-        <a href="/groups/{{.Group.Slug}}/edit" class="nav-btn">Edit</a>
+        <div class="creator-actions">
+            <a href="/groups/{{.Group.Slug}}/digest" class="nav-btn">Digest</a>
+            <a href="/groups/{{.Group.Slug}}/rss" class="nav-btn" title="RSS feed (e.g. for NetNewsWire, Feedbin)">RSS</a>
+            <a href="/groups/{{.Group.Slug}}/edit" class="nav-btn">Edit</a>
+        </div>
     </div>
 
     <nav class="filter-row">

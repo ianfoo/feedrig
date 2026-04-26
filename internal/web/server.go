@@ -120,6 +120,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /groups/{slug}/delete", s.groupDelete)
 	mux.HandleFunc("POST /groups/{slug}/members", s.groupSetMembers)
 	mux.HandleFunc("GET /groups/{slug}/digest", s.groupDigest)
+	mux.HandleFunc("GET /groups/{slug}/rss", s.groupRSS)
 
 	s.registerAPI(mux)
 
@@ -302,6 +303,7 @@ func (s *Server) creatorDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	latestWatchedID, _ := s.videos.LatestWatchedID(r.Context(), id)
+	topTags, _ := s.enrich.TopTagsForCreator(r.Context(), id, 6)
 
 	type row struct {
 		Video       video.Video
@@ -315,6 +317,7 @@ func (s *Server) creatorDetail(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "creator.html", map[string]any{
 		"Creator": c,
 		"Rows":    rows,
+		"TopTags": topTags,
 		"Flash":   r.URL.Query().Get("flash"),
 		"Error":   r.URL.Query().Get("err"),
 	})

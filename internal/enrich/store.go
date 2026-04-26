@@ -146,6 +146,44 @@ func (s *Store) SetTags(ctx context.Context, videoID int64, tags []string, sourc
 	return tx.Commit()
 }
 
+// TagCount is a tag along with how many of a creator's videos carry it.
+type TagCount struct {
+	Name  string
+	Count int
+}
+
+// TopTagsForCreator returns the most common tags across a creator's videos,
+// ordered by frequency desc. Useful for "what does this creator post about?"
+// pre-categorization on the creator card without re-running the LLM.
+func (s *Store) TopTagsForCreator(ctx context.Context, creatorID int64, limit int) ([]TagCount, error) {
+	if limit <= 0 {
+		limit = 6
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.name, COUNT(*) AS n
+		  FROM tags t
+		  JOIN video_tags vt ON vt.tag_id = t.id
+		  JOIN videos v ON v.id = vt.video_id
+		 WHERE v.creator_id = ?
+		 GROUP BY t.name
+		 ORDER BY n DESC, t.name
+		 LIMIT ?
+	`, creatorID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TagCount
+	for rows.Next() {
+		var tc TagCount
+		if err := rows.Scan(&tc.Name, &tc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, tc)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) TagsForVideo(ctx context.Context, videoID int64) ([]Tag, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT t.id, t.name
