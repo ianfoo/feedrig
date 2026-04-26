@@ -40,16 +40,23 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 
 ## v0.1.1 — Real discovery
 
-**Status:** 🚧 in progress.
+**Status:** ✅ shipped.
 
 **Features:**
 
-- [ ] `chromedp` discoverer that drives a headless Chromium against `instagram.com/<handle>/`, scrolls to load more posts, and extracts shortcodes from the rendered DOM.
-- [ ] `cookiedlp` discoverer: `yt-dlp --flat-playlist <profile_url> --cookies <file>` to enumerate posts using a burner-account session. Useful when the headless approach hits rate limits or login walls.
-- [ ] `--discoverer` flag selects the active strategy; `auto` tries chromedp → instago and reports which path succeeded.
-- [ ] Soft fallback chain: discovery failures don't crash; they return `ErrDiscovery` and the UI logs a hint about which discoverer to try next.
+- [x] `chromedp` discoverer (`internal/ingest/chromedp.go`) drives headless Chromium against the profile page, scrolls (configurable) to load more posts, harvests `/p/`, `/reel/`, and `/tv/` anchor hrefs from the rendered DOM. Robust to small HTML changes because it only inspects link targets.
+- [x] `--discoverer` flag (`auto|chromedp|instago|none`); `auto` chains chromedp → instago and logs which path succeeded.
+- [x] `ChainDiscoverer` (`internal/ingest/chain.go`): tries strategies in order, returns the first that doesn't error.
+- [x] `NoopDiscoverer`: explicit "disable discovery" mode for users who only want manual paste.
 
-**Deviations:** TBD.
+**Deviations from original v0.1.1 plan:**
+
+- **`cookiedlp` (yt-dlp profile listing) dropped.** Upstream `InstagramUserIE` is marked `_WORKING = False`; even with cookies it fails. If we want a non-Chromium auth-required path later, we'll write our own GraphQL client (the InstaFix technique).
+- **No login UI for IG cookies in v0.1.1.** When the user is ready for a burner account, they'll export cookies via a browser extension (e.g., "Get cookies.txt") and pass `--cookies path.txt`. v0.2+ may add a UI flow.
+
+**Open issues to monitor:**
+
+- IG often rate-limits unauthenticated requests from datacenter IPs. From a residential IP the no-login chromedp approach is more reliable. We may need to add cookie support to chromedp itself (not just yt-dlp) once we hit the wall.
 
 ---
 

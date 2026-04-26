@@ -23,6 +23,8 @@ func main() {
 	dataDir := flag.String("data", "data", "directory for sqlite db")
 	mediaDir := flag.String("media", "media", "directory for downloaded videos")
 	cookies := flag.String("cookies", "", "optional path to instagram cookies file (yt-dlp format)")
+	discoverer := flag.String("discoverer", "auto", "discovery strategy: auto|chromedp|instago|none")
+	chromePath := flag.String("chrome", "", "path to chromium/chrome binary (default: search PATH)")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -47,8 +49,9 @@ func main() {
 	creators := creator.NewStore(conn)
 	videos := video.NewStore(conn)
 
+	disc := buildDiscoverer(*discoverer, *chromePath, log)
 	ingestSvc := ingest.NewService(
-		ingest.InstagoDiscoverer{},
+		disc,
 		ingest.YtDlpDownloader{CookieFile: *cookies},
 		creators, videos, mediaAbs, log,
 	)
@@ -80,4 +83,32 @@ func main() {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutCtx)
+}
+
+func buildDiscoverer(name, chromePath string, log *slog.Logger) ingest.Discoverer {
+	switch name {
+	case "chromedp":
+		return ingest.ChromedpDiscoverer{ChromePath: chromePath, MaxScrolls: 1}
+	case "instago":
+		return ingest.InstagoDiscoverer{}
+	case "none":
+		return ingest.NoopDiscoverer{}
+	case "auto", "":
+		return ingest.ChainDiscoverer{
+			Steps: []ingest.NamedDiscoverer{
+				{Name: "chromedp", Disc: ingest.ChromedpDiscoverer{ChromePath: chromePath, MaxScrolls: 1}},
+				{Name: "instago", Disc: ingest.InstagoDiscoverer{}},
+			},
+			Log: log,
+		}
+	default:
+		log.Warn("unknown discoverer; using auto", "value", name)
+		return ingest.ChainDiscoverer{
+			Steps: []ingest.NamedDiscoverer{
+				{Name: "chromedp", Disc: ingest.ChromedpDiscoverer{ChromePath: chromePath, MaxScrolls: 1}},
+				{Name: "instago", Disc: ingest.InstagoDiscoverer{}},
+			},
+			Log: log,
+		}
+	}
 }
