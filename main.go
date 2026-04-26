@@ -16,9 +16,11 @@ import (
 
 	"github.com/ianfoo/feedrig/internal/creator"
 	"github.com/ianfoo/feedrig/internal/db"
+	"github.com/ianfoo/feedrig/internal/digest"
 	"github.com/ianfoo/feedrig/internal/enrich"
 	"github.com/ianfoo/feedrig/internal/groups"
 	"github.com/ianfoo/feedrig/internal/ingest"
+	"github.com/ianfoo/feedrig/internal/notify"
 	"github.com/ianfoo/feedrig/internal/mcp"
 	"github.com/ianfoo/feedrig/internal/schedule"
 	"github.com/ianfoo/feedrig/internal/settings"
@@ -35,7 +37,7 @@ func main() {
 	if len(os.Args) >= 2 {
 		cmd := os.Args[1]
 		switch cmd {
-		case "mcp", "sweep", "poll", "enrich":
+		case "mcp", "sweep", "poll", "enrich", "digest":
 			os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
 			switch cmd {
 			case "mcp":
@@ -46,6 +48,8 @@ func main() {
 				runPoll()
 			case "enrich":
 				runEnrich()
+			case "digest":
+				runDigest()
 			}
 			return
 		}
@@ -279,6 +283,83 @@ func runEnrich() {
 	defer cancel()
 	worker.ProcessOne(ctx, id)
 	log.Info("enrich done", "video_id", id)
+}
+
+// runDigest renders the digest for one group and either prints it to stdout
+// or delivers it via SMTP. Cron-friendly: `feedrig digest news --to me@x` to
+// send a daily email.
+func runDigest() {
+	dataDir := flag.String("data", "data", "directory holding feedrig.db")
+	baseURL := flag.String("base-url", "http://localhost:7777", "URL prefix for in-email video links")
+	onlyUnseen := flag.Bool("only-unseen", false, "include only items posted since the group's last visit")
+	to := flag.String("to", "", "comma-separated recipient list; empty = print to stdout")
+	smtpHost := flag.String("smtp-host", os.Getenv("FEEDRIG_SMTP_HOST"), "SMTP host (FEEDRIG_SMTP_HOST)")
+	smtpPort := flag.Int("smtp-port", envInt("FEEDRIG_SMTP_PORT", 587), "SMTP port (FEEDRIG_SMTP_PORT)")
+	smtpUser := flag.String("smtp-user", os.Getenv("FEEDRIG_SMTP_USER"), "SMTP user (FEEDRIG_SMTP_USER)")
+	smtpPass := flag.String("smtp-pass", os.Getenv("FEEDRIG_SMTP_PASS"), "SMTP password (FEEDRIG_SMTP_PASS)")
+	smtpFrom := flag.String("smtp-from", os.Getenv("FEEDRIG_SMTP_FROM"), "SMTP from address (FEEDRIG_SMTP_FROM)")
+	smtpTLS := flag.Bool("smtp-tls", false, "use implicit TLS (port 465 style) instead of STARTTLS")
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: feedrig digest [flags] <group-slug>")
+		os.Exit(2)
+	}
+	slug := flag.Arg(0)
+
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	conn, err := db.Open(filepath.Join(*dataDir, "feedrig.db"))
+	if err != nil {
+		log.Error("open db", "err", err); os.Exit(1)
+	}
+	defer conn.Close()
+
+	gr := groups.NewStore(conn)
+	g, err := gr.GetBySlug(context.Background(), slug)
+	if err != nil {
+		log.Error("group lookup", "slug", slug, "err", err); os.Exit(1)
+	}
+	r := &digest.Renderer{
+		Creators: creator.NewStore(conn),
+		Videos:   video.NewStore(conn),
+		Enrich:   enrich.NewStore(conn),
+		Groups:   gr,
+		BaseURL:  *baseURL,
+	}
+	msg, err := r.Render(context.Background(), g, *onlyUnseen)
+	if err != nil {
+		log.Error("render", "err", err); os.Exit(1)
+	}
+
+	if *to == "" {
+		// Print mode: dump the text body. Useful for cron+pipe to mail(1)
+		// or just for inspection.
+		fmt.Print(msg.TextBody)
+		return
+	}
+
+	msg.To = splitCSV(*to)
+	mailer := notify.SMTPMailer{
+		Host:           *smtpHost,
+		Port:           *smtpPort,
+		User:           *smtpUser,
+		Pass:           *smtpPass,
+		From:           *smtpFrom,
+		UseImplicitTLS: *smtpTLS,
+	}
+	if err := mailer.Send(context.Background(), msg); err != nil {
+		log.Error("send", "err", err); os.Exit(1)
+	}
+	log.Info("digest delivered", "group", slug, "recipients", len(msg.To), "items_subject", msg.Subject)
+}
+
+func envInt(name string, fallback int) int {
+	if v := os.Getenv(name); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
 }
 
 // runMCP is the stdio MCP-server subcommand. Reads JSON-RPC from stdin and
