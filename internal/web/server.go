@@ -17,6 +17,7 @@ import (
 
 	"github.com/ianfoo/feedrig/internal/creator"
 	"github.com/ianfoo/feedrig/internal/enrich"
+	"github.com/ianfoo/feedrig/internal/groups"
 	"github.com/ianfoo/feedrig/internal/ingest"
 	"github.com/ianfoo/feedrig/internal/settings"
 	"github.com/ianfoo/feedrig/internal/video"
@@ -30,17 +31,18 @@ type Server struct {
 	videos    *video.Store
 	enrich    *enrich.Store
 	settings  *settings.Store
+	groups    *groups.Store
 	ingest    *ingest.Service
 	mediaRoot string
 	tpl       *template.Template
 	log       *slog.Logger
 }
 
-func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, st *settings.Store, ing *ingest.Service, mediaRoot string, log *slog.Logger) (*Server, error) {
+func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, st *settings.Store, gr *groups.Store, ing *ingest.Service, mediaRoot string, log *slog.Logger) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	srv := &Server{creators: creators, videos: videos, enrich: en, settings: st, ingest: ing, mediaRoot: mediaRoot, log: log}
+	srv := &Server{creators: creators, videos: videos, enrich: en, settings: st, groups: gr, ingest: ing, mediaRoot: mediaRoot, log: log}
 	tpl, err := template.New("").Funcs(funcMap).Funcs(template.FuncMap{
 		"thumbURL": func(v video.Video) string {
 			if !v.ThumbnailPath.Valid {
@@ -84,6 +86,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /pending", s.pendingList)
 	mux.HandleFunc("GET /settings", s.settingsPage)
 	mux.HandleFunc("POST /settings", s.saveSettings)
+
+	mux.HandleFunc("GET /groups", s.groupsList)
+	mux.HandleFunc("POST /groups", s.createGroup)
+	mux.HandleFunc("GET /groups/{slug}", s.groupFeed)
+	mux.HandleFunc("GET /groups/{slug}/edit", s.groupEdit)
+	mux.HandleFunc("POST /groups/{slug}/update", s.groupUpdate)
+	mux.HandleFunc("POST /groups/{slug}/delete", s.groupDelete)
+	mux.HandleFunc("POST /groups/{slug}/members", s.groupSetMembers)
 
 	return mux
 }
@@ -455,6 +465,227 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) groupsList(w http.ResponseWriter, r *http.Request) {
+	gs, err := s.groups.List(r.Context())
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.render(w, "groups.html", map[string]any{
+		"Groups": gs,
+		"Flash":  r.URL.Query().Get("flash"),
+		"Error":  r.URL.Query().Get("err"),
+	})
+}
+
+func (s *Server) createGroup(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		s.userError(w, "invalid form")
+		return
+	}
+	recency, _ := strconv.Atoi(r.FormValue("recency_days"))
+	g, err := s.groups.Create(r.Context(),
+		r.FormValue("name"), recency,
+		splitCSVField(r.FormValue("include_tags")),
+		splitCSVField(r.FormValue("exclude_tags")),
+	)
+	if err != nil {
+		http.Redirect(w, r, "/groups?err="+escape(err.Error()), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, "/groups/"+g.Slug+"/edit?flash=Created", http.StatusFound)
+}
+
+func (s *Server) groupFeed(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+
+	q := groups.FeedQuery{
+		OnlyUnseen: r.URL.Query().Get("unseen") == "1",
+	}
+	if t := r.URL.Query().Get("tag"); t != "" {
+		q.TagsAny = []string{strings.ToLower(t)}
+	}
+
+	vids, err := s.groups.Feed(r.Context(), g, q)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+
+	type row struct {
+		Video   video.Video
+		Creator string
+		Tags    []enrich.Tag
+		Summary *enrich.Summary
+	}
+	rows := make([]row, len(vids))
+	creatorCache := map[int64]string{}
+	for i, v := range vids {
+		handle, ok := creatorCache[v.CreatorID]
+		if !ok {
+			if c, err := s.creators.Get(r.Context(), v.CreatorID); err == nil {
+				handle = c.Handle
+				creatorCache[v.CreatorID] = handle
+			}
+		}
+		tags, _ := s.enrich.TagsForVideo(r.Context(), v.ID)
+		summary, _ := s.enrich.GetSummary(r.Context(), v.ID)
+		rows[i] = row{Video: v, Creator: handle, Tags: tags, Summary: summary}
+	}
+
+	// Mark visited AFTER computing the feed so "unseen" results stay stable
+	// for this render. The next visit gets the new boundary.
+	_ = s.groups.MarkVisited(r.Context(), g.ID)
+
+	s.render(w, "group_feed.html", map[string]any{
+		"Group":      g,
+		"Rows":       rows,
+		"OnlyUnseen": q.OnlyUnseen,
+		"ActiveTag":  r.URL.Query().Get("tag"),
+		"Flash":      r.URL.Query().Get("flash"),
+		"Error":      r.URL.Query().Get("err"),
+	})
+}
+
+func (s *Server) groupEdit(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	allCreators, err := s.creators.List(r.Context(), creator.SortHandle)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	members, err := s.groups.Members(r.Context(), g.ID)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	memberMap := map[int64]groups.Membership{}
+	for _, m := range members {
+		memberMap[m.CreatorID] = m
+	}
+	type row struct {
+		Creator  creator.Creator
+		Included bool
+		Excluded bool
+	}
+	rows := make([]row, len(allCreators))
+	for i, c := range allCreators {
+		m, ok := memberMap[c.ID]
+		rows[i] = row{Creator: c, Included: ok && !m.Excluded, Excluded: ok && m.Excluded}
+	}
+
+	s.render(w, "group_edit.html", map[string]any{
+		"Group":   g,
+		"Rows":    rows,
+		"Flash":   r.URL.Query().Get("flash"),
+		"Error":   r.URL.Query().Get("err"),
+	})
+}
+
+func (s *Server) groupUpdate(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.userError(w, "invalid form")
+		return
+	}
+	recency, _ := strconv.Atoi(r.FormValue("recency_days"))
+	if err := s.groups.Update(r.Context(), g.ID,
+		r.FormValue("name"), recency,
+		splitCSVField(r.FormValue("include_tags")),
+		splitCSVField(r.FormValue("exclude_tags")),
+	); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/groups/"+g.Slug+"/edit?flash=Updated", http.StatusFound)
+}
+
+func (s *Server) groupDelete(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := s.groups.Delete(r.Context(), g.ID); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/groups?flash=Deleted", http.StatusFound)
+}
+
+func (s *Server) groupSetMembers(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.userError(w, "invalid form")
+		return
+	}
+	included := parseInt64s(r.Form["include[]"])
+	excluded := parseInt64s(r.Form["exclude[]"])
+	if err := s.groups.SetMembers(r.Context(), g.ID, included, excluded); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/groups/"+g.Slug+"/edit?flash=Members+updated", http.StatusFound)
+}
+
+func splitCSVField(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func parseInt64s(ss []string) []int64 {
+	out := make([]int64, 0, len(ss))
+	for _, s := range ss {
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		s.userError(w, "invalid form")
@@ -542,6 +773,7 @@ var funcMap = template.FuncMap{
 		return m, nil
 	},
 	"slice": func(items ...any) []any { return items },
+	"joinTags": func(tags []string) string { return strings.Join(tags, ", ") },
 	"humanTime": func(t any) string {
 		var tt time.Time
 		switch v := t.(type) {

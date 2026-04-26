@@ -143,17 +143,35 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 
 ## v0.4 — Smart playlists / groups + filtering
 
-**Status:** ⏳ planned.
+**Status:** ✅ shipped.
 
 **Features:**
 
-- [ ] `groups` and `creator_group_memberships` tables.
-- [ ] Group cadence (separate from per-creator polling — drives the "what's new since I last looked at this group?" semantics).
-- [ ] Group detail page: feed of videos new since last visit, filterable by category tags. Mark-as-seen on visit.
-- [ ] Inter-group filtering: "show me only `political` across `news` group".
-- [ ] Drag-to-reorder groups in the sidebar.
+- [x] Schema migration 3: `groups` table (name, slug, recency_days, include_tags, exclude_tags, position, last_visited_at) + `group_creator_memberships` (group_id, creator_id, excluded). Tag filters stored as comma-separated strings on the group row; the canonical `tags` table normalizes the per-video side.
+- [x] `internal/groups`: CRUD + a `Feed(group, FeedQuery)` query that joins videos to memberships, applies recency window, include-tags, exclude-tags, and an optional ad-hoc `TagsAny` narrowing chip. Excluded creators are subtracted from the membership join (`excluded = 0` filter). Results never materialized.
+- [x] `last_visited_at` updated after every group-feed render so the "Unseen since last visit" toggle has a stable boundary.
+- [x] `/groups` — list + create form.
+- [x] `/groups/{slug}` — feed with All / Unseen filter row + clickable tag chips that re-render with `?tag=`.
+- [x] `/groups/{slug}/edit` — name + window + include/exclude tag inputs; per-creator radio (none/include/exclude) with a small JS shim that translates the radios into `include[]` and `exclude[]` arrays at submit; danger-zone delete.
+- [x] Topbar nav adds Groups link.
 
-**Deviations:** TBD.
+**Deviations from the original v0.4 plan:**
+
+- **Group polling cadence dropped.** Per-creator cadence (v0.3) is sufficient — discovery is per-creator, and groups are read-only views over the resulting videos table. Adding a per-group cadence would have meant a second scheduler and confusing "what triggers a fetch" semantics. If we ever want a per-group "force a discovery sweep now" button, it's an HTTP endpoint away.
+- **Drag-to-reorder deferred.** Position column is in the schema; UI is queued for v0.4.x.
+
+**Smoke test** (4 videos across 3 creators, tags assigned manually):
+
+- Group "News" with members `newsfeed`, `cryptobro`; `include_tags=news`; `exclude_tags=crypto`.
+- Result: NEWS1 (news tag, no crypto) shown ✅; NEWS2 (news + crypto) hidden ✅; CRYPTO1 (crypto only) hidden ✅; MUSIC1 (creator not in group) hidden ✅.
+- `?tag=news` narrowing returns only NEWS1 ✅.
+- `?unseen=1` toggle works (verified by `last_visited_at` updates).
+
+**Smart-playlist settings evaluated** (per the user's open question):
+
+- **Shipped in v0.4:** name, recency window, include-tag filters, exclude-tag filters, creator membership with per-creator exclude, tag-chip narrowing via `?tag=`, "unseen since last visit" toggle.
+- **Deferred to v0.4.x or v0.5:** position / drag-reorder, color, item cap, min/max duration, watched-only / unwatched-only toggle, sort order overrides, per-playlist default playback speed, auto-play next within playlist, notifications, RSS export.
+- **Probably won't build:** mark-as-seen-on-scroll-past (the `last_visited_at` model is simpler and matches the user's mental model), excluded-by-handle UI (already covered by per-creator exclude in membership).
 
 ---
 

@@ -1,0 +1,95 @@
+{{template "head" (dict "Title" (printf "Edit %s" .Group.Name) "Crumb" .Group.Name)}}
+{{template "flash" .}}
+
+<section class="panel">
+    <h1>Edit: {{.Group.Name}}</h1>
+    <form method="post" action="/groups/{{.Group.Slug}}/update" class="settings-form">
+        <label>
+            <span>Name</span>
+            <input name="name" value="{{.Group.Name}}" required>
+        </label>
+        <label>
+            <span>Recency window (days)</span>
+            <input type="number" name="recency_days" min="1" max="365" value="{{.Group.RecencyDays}}">
+        </label>
+        <label>
+            <span>Include tags (comma-separated)</span>
+            <input name="include_tags" value="{{joinTags .Group.IncludeTags}}">
+        </label>
+        <label>
+            <span>Exclude tags (comma-separated)</span>
+            <input name="exclude_tags" value="{{joinTags .Group.ExcludeTags}}">
+        </label>
+        <button type="submit" class="primary">Save settings</button>
+    </form>
+</section>
+
+<section class="panel">
+    <h2 style="margin:0 0 0.5rem">Members</h2>
+    <p class="meta">Pick which creators belong to this group. "Exclude" subtracts a creator (useful when they overlap with other groups but you don't want them showing here).</p>
+    <form method="post" action="/groups/{{.Group.Slug}}/members" class="members-form">
+        <ul class="member-list">
+            {{range .Rows}}
+            <li>
+                <span class="m-handle">@{{.Creator.Handle}}</span>
+                {{with .Creator.DisplayName.String}}<span class="m-dn">{{.}}</span>{{end}}
+                <label class="m-toggle">
+                    <input type="radio" name="creator_{{.Creator.ID}}" value="none" {{if not (or .Included .Excluded)}}checked{{end}}>
+                    <span>none</span>
+                </label>
+                <label class="m-toggle">
+                    <input type="radio" name="creator_{{.Creator.ID}}" value="include" {{if .Included}}checked{{end}}>
+                    <span>include</span>
+                </label>
+                <label class="m-toggle">
+                    <input type="radio" name="creator_{{.Creator.ID}}" value="exclude" {{if .Excluded}}checked{{end}}>
+                    <span>exclude</span>
+                </label>
+                <input type="hidden" class="include-id" data-id="{{.Creator.ID}}" name="include[]" value="" disabled>
+                <input type="hidden" class="exclude-id" data-id="{{.Creator.ID}}" name="exclude[]" value="" disabled>
+            </li>
+            {{end}}
+        </ul>
+        <button type="submit" class="primary">Save members</button>
+    </form>
+</section>
+
+<section class="panel">
+    <details>
+        <summary class="danger-summary">Danger zone</summary>
+        <form method="post" action="/groups/{{.Group.Slug}}/delete" onsubmit="return confirm('Delete this group? Creator memberships are removed; videos remain.')">
+            <button type="submit" class="danger">Delete group</button>
+        </form>
+    </details>
+</section>
+
+<script>
+// Wire the radio groups: when a row's "include" or "exclude" radio is
+// chosen, populate the matching hidden include[] / exclude[] field with
+// the creator id, and disable the others. Submit sends the right arrays.
+(() => {
+    const form = document.querySelector('.members-form');
+    if (!form) return;
+    function sync() {
+        const inc = form.querySelectorAll('.include-id');
+        const exc = form.querySelectorAll('.exclude-id');
+        inc.forEach(el => { el.disabled = true; el.value = ''; });
+        exc.forEach(el => { el.disabled = true; el.value = ''; });
+        form.querySelectorAll('input[type=radio]:checked').forEach(r => {
+            if (r.value === 'include') {
+                const li = r.closest('li');
+                const h = li.querySelector('.include-id');
+                h.disabled = false; h.value = h.dataset.id;
+            } else if (r.value === 'exclude') {
+                const li = r.closest('li');
+                const h = li.querySelector('.exclude-id');
+                h.disabled = false; h.value = h.dataset.id;
+            }
+        });
+    }
+    form.addEventListener('change', sync);
+    sync();
+})();
+</script>
+
+{{template "foot" .}}

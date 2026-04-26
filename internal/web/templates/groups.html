@@ -1,0 +1,56 @@
+{{template "head" (dict "Title" "Groups" "Crumb" "Groups")}}
+{{template "flash" .}}
+
+<section class="panel">
+    <h1>Smart playlists</h1>
+    <p class="meta">Group creators by topic; see what's new since you last looked, optionally filtered by tag.</p>
+
+    <details>
+        <summary>Create a group</summary>
+        <form method="post" action="/groups" class="settings-form">
+            <label>
+                <span>Name</span>
+                <input name="name" placeholder="news, music, etc." required>
+            </label>
+            <label>
+                <span>Recency window (days)</span>
+                <input type="number" name="recency_days" min="1" max="365" value="7">
+            </label>
+            <label>
+                <span>Include tags (comma-separated, optional)</span>
+                <input name="include_tags" placeholder="news, political-commentary">
+            </label>
+            <label>
+                <span>Exclude tags (comma-separated, optional)</span>
+                <input name="exclude_tags" placeholder="crypto">
+            </label>
+            <button type="submit" class="primary">Create</button>
+        </form>
+    </details>
+</section>
+
+<section class="panel">
+    {{if .Groups}}
+    <ul class="creator-list">
+        {{range .Groups}}
+        <li>
+            <div class="creator-row">
+                <a href="/groups/{{.Slug}}" class="creator-link">
+                    <span class="handle">{{.Name}}</span>
+                    <span class="dn">{{.RecencyDays}}d window</span>
+                </a>
+                <span class="meta">
+                    {{if .IncludeTags}}+{{len .IncludeTags}} include{{end}}
+                    {{if .ExcludeTags}} −{{len .ExcludeTags}} exclude{{end}}
+                </span>
+                <a class="nav-btn" href="/groups/{{.Slug}}/edit">Edit</a>
+            </div>
+        </li>
+        {{end}}
+    </ul>
+    {{else}}
+    <p class="empty">No groups yet. Create one above to start curating smart playlists.</p>
+    {{end}}
+</section>
+
+{{template "foot" .}}

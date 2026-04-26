@@ -16,6 +16,27 @@ var migrations = []string{
 	 ALTER TABLE videos ADD COLUMN enrichment_error TEXT;`,
 	// 2: per-creator poll interval override (NULL = use global default).
 	`ALTER TABLE creators ADD COLUMN poll_interval_seconds INTEGER;`,
+	// 3: smart-playlist groups + creator memberships. Tag filters are stored
+	// as comma-separated strings on the group row — they're authoritative
+	// (the canonical tag table is just for normalization on the video side).
+	`CREATE TABLE groups (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		name            TEXT    NOT NULL,
+		slug            TEXT    NOT NULL UNIQUE,
+		recency_days    INTEGER NOT NULL DEFAULT 7,
+		include_tags    TEXT    NOT NULL DEFAULT '',
+		exclude_tags    TEXT    NOT NULL DEFAULT '',
+		position        INTEGER NOT NULL DEFAULT 0,
+		last_visited_at INTEGER,
+		created_at      INTEGER NOT NULL
+	);
+	CREATE TABLE group_creator_memberships (
+		group_id   INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+		creator_id INTEGER NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+		excluded   INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY(group_id, creator_id)
+	);
+	CREATE INDEX idx_group_creator_memberships_creator ON group_creator_memberships(creator_id);`,
 }
 
 func applyMigrations(conn *sql.DB) error {

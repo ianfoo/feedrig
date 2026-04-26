@@ -1,0 +1,56 @@
+{{template "head" (dict "Title" .Group.Name "Crumb" .Group.Name)}}
+{{template "flash" .}}
+
+<section class="panel">
+    <div class="row-between">
+        <div>
+            <h1>{{.Group.Name}}</h1>
+            <p class="meta">
+                Last {{.Group.RecencyDays}} days
+                {{if .Group.IncludeTags}} · only: {{range $i, $t := .Group.IncludeTags}}{{if $i}}, {{end}}<span class="tag">{{$t}}</span>{{end}}{{end}}
+                {{if .Group.ExcludeTags}} · except: {{range $i, $t := .Group.ExcludeTags}}{{if $i}}, {{end}}<span class="tag">{{$t}}</span>{{end}}{{end}}
+            </p>
+        </div>
+        <a href="/groups/{{.Group.Slug}}/edit" class="nav-btn">Edit</a>
+    </div>
+
+    <nav class="filter-row">
+        <a href="/groups/{{.Group.Slug}}" class="{{if not .OnlyUnseen}}active{{end}}">All</a>
+        <a href="/groups/{{.Group.Slug}}?unseen=1" class="{{if .OnlyUnseen}}active{{end}}">Unseen since last visit</a>
+        {{with .ActiveTag}}<span class="tag-active">tag: {{.}}</span><a href="/groups/{{$.Group.Slug}}{{if $.OnlyUnseen}}?unseen=1{{end}}" class="clear-link">clear</a>{{end}}
+    </nav>
+</section>
+
+<section class="panel">
+    {{if .Rows}}
+    <ul class="video-grid">
+        {{range .Rows}}
+        <li class="video-card state-{{.Video.State}}">
+            <a href="/videos/{{.Video.ID}}">
+                {{if .Video.ThumbnailPath.Valid}}
+                <div class="thumb"><img src="{{thumbURL .Video}}" alt=""></div>
+                {{else}}
+                <div class="thumb thumb-empty"></div>
+                {{end}}
+                <div class="card-body">
+                    <div class="card-title">{{or .Video.Title.String "(untitled)"}}</div>
+                    <div class="card-meta">
+                        @{{.Creator}} · {{if .Video.PostedAt.Valid}}{{humanTime .Video.PostedAt.Int64}}{{else}}{{humanTime .Video.DownloadedAt}}{{end}}
+                    </div>
+                    {{if .Tags}}
+                    <div class="tag-row tight">
+                        {{range .Tags}}<a href="/groups/{{$.Group.Slug}}?tag={{.Name}}" class="tag tag-link">{{.Name}}</a>{{end}}
+                    </div>
+                    {{end}}
+                    {{with .Summary}}<div class="card-summary">{{.Summary}}</div>{{end}}
+                </div>
+            </a>
+        </li>
+        {{end}}
+    </ul>
+    {{else}}
+    <p class="empty">No matching videos. Try expanding the recency window or removing tag filters.</p>
+    {{end}}
+</section>
+
+{{template "foot" .}}

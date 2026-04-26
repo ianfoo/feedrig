@@ -15,6 +15,7 @@ import (
 	"github.com/ianfoo/feedrig/internal/creator"
 	"github.com/ianfoo/feedrig/internal/db"
 	"github.com/ianfoo/feedrig/internal/enrich"
+	"github.com/ianfoo/feedrig/internal/groups"
 	"github.com/ianfoo/feedrig/internal/ingest"
 	"github.com/ianfoo/feedrig/internal/schedule"
 	"github.com/ianfoo/feedrig/internal/settings"
@@ -79,8 +80,9 @@ func main() {
 	ingestSvc.SetEnricher(worker)
 
 	settingsStore := settings.NewStore(conn)
+	groupsStore := groups.NewStore(conn)
 
-	srv, err := web.NewServer(creators, videos, enrichStore, settingsStore, ingestSvc, mediaAbs, log)
+	srv, err := web.NewServer(creators, videos, enrichStore, settingsStore, groupsStore, ingestSvc, mediaAbs, log)
 	if err != nil {
 		log.Error("server init", "err", err); os.Exit(1)
 	}
