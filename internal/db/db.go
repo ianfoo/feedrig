@@ -22,5 +22,9 @@ func Open(path string) (*sql.DB, error) {
 		conn.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := applyMigrations(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("apply migrations: %w", err)
+	}
 	return conn, nil
 }

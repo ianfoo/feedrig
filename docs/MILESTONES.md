@@ -60,22 +60,54 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 
 ---
 
-## v0.2 — Transcription, summary, auto-tagging; JSON API surface
+## v0.2 — Transcription, summary, auto-tagging, creator management
 
-**Status:** ⏳ planned.
+**Status:** ✅ shipped (with deviations — see below).
 
 **Features:**
 
-- [ ] `transcribe.Service` interface; impls: `whispercpp` (local, default), `openrouter-whisper` (remote).
-- [ ] `summarize.Service` interface; impls: `ollama` (local, default), `openrouter-llm` (remote, supports Claude / GPT / Kimi via single client).
-- [ ] Schema additions: `transcripts`, `summaries`.
-- [ ] Auto-tagging via LLM prompt (categories user-configurable in a `categories.txt` or DB table).
-- [ ] Schema additions: `tags`, `video_tags`.
-- [ ] Background worker pool: when a new video is downloaded, enqueue (transcribe → summarize → tag).
-- [ ] Player page shows summary + tags; creator detail card shows category chips.
-- [ ] JSON API surface introduced: `/api/v1/creators`, `/api/v1/videos`, `/api/v1/videos/{id}/position`, etc. HTML routes call into the same service layer.
+- [x] Schema migrations system (`internal/db/migrations.go`) using `PRAGMA user_version`.
+- [x] Schema additions: `transcripts`, `summaries`, `tags`, `video_tags`, `settings`, `videos.enrichment_state`, `videos.enrichment_error`.
+- [x] `internal/transcribe`: `Transcriber` interface; `WhisperCpp` impl (subprocess: ffmpeg → 16kHz mono wav → whisper.cpp `-otxt`); `Noop` for "no transcription configured".
+- [x] `internal/summarize`: `Summarizer` interface; `OpenRouter` impl (single HTTP client → many providers via `--openrouter-model` flag, e.g. `anthropic/claude-3.5-haiku`, `moonshotai/kimi-k2`); `Stub` deterministic offline summarizer for testing; `Noop`.
+- [x] `internal/enrich`: store + worker. Worker runs the transcribe → summarize → tag pipeline serially off a buffered queue, with a 30s periodic rescan that picks up `pending` videos missed by the in-memory queue (e.g., after restart).
+- [x] Ingest service auto-enqueues newly-downloaded videos via a small `Enricher` interface (avoids import cycle).
+- [x] Player page renders summary block + tag chips; original caption hidden in a `<details>` since the summary is now the primary brief.
+- [x] **Creator management UI** (per user feedback added mid-milestone): sort by name / added / last-fetched (server-side); client-side substring filter; bulk add via textarea or `.txt`/`.csv` file upload (`POST /creators/bulk`, supports `handle, Display Name` per line and `#` comments); per-row inline edit display name + delete actions (`POST /creators/{id}/update`, `POST /creators/{id}/delete`).
 
-**Deviations:** TBD.
+**Deviations from original v0.2 plan:**
+
+- **JSON API surface deferred to v0.5.** Building it twice (HTML + JSON) before there's an SPA consumer would be churn. The handlers cleanly delegate to the service layer, so adding `/api/v1/*` later is mechanical.
+- **Local LLM via ollama deferred.** `OpenRouter` covers most of the user's "switch to a different model" requirement (Claude, GPT, Kimi via one client). `ollama` integration is mostly the same shape (HTTP client to `:11434`); will add when we hit a use case.
+- **OpenRouter Whisper transcription deferred.** Local `whisper.cpp` is wired and tested-by-shape; remote whisper would be a parallel impl.
+- **Creator management was added** (not in original plan) per explicit user feedback during the milestone. Bulk add, sort, filter, and inline edit/delete are all live.
+
+**End-to-end smoke test (deterministic, no network):**
+
+```sh
+./feedrig -summarizer stub -discoverer none -categories "test,nature,wildlife"
+# → bulk-add → manual SQL insert of a video file → 30s rescan tick
+# → enrichment_state=done, summary populated, tags auto-assigned
+# → player page renders summary block + tag chips
+```
+
+**Open design questions raised mid-milestone (for v0.4):**
+
+- The user asked what other smart-playlist settings might be worth exposing. Capturing the candidate list here so it's not lost:
+    - **Recency window** (last N days)
+    - **Category include / exclude filters**
+    - **Min / max video duration** (filter shorts vs long-form)
+    - **Watched / unwatched only**
+    - **Sort:** newest / random / by creator / longest unwatched
+    - **Item cap** (top N)
+    - **Per-playlist default playback speed**
+    - **Auto-play next within playlist** (binge mode)
+    - **Mark-as-seen behavior:** on scroll-past vs on watched
+    - **Optional notification** (push / email) when N+ items match
+    - **Excluded creators** (subtractive set, useful when a creator joins a topic group but you want to skip them in the news view)
+    - **Visual customization** (color, icon, position in sidebar)
+    - **Export as RSS / OPML** for piping into a reader
+- I'll evaluate which to ship at v0.4 and which to defer.
 
 ---
 

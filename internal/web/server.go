@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ianfoo/feedrig/internal/creator"
+	"github.com/ianfoo/feedrig/internal/enrich"
 	"github.com/ianfoo/feedrig/internal/ingest"
 	"github.com/ianfoo/feedrig/internal/video"
 )
@@ -26,17 +27,18 @@ var assets embed.FS
 type Server struct {
 	creators  *creator.Store
 	videos    *video.Store
+	enrich    *enrich.Store
 	ingest    *ingest.Service
 	mediaRoot string
 	tpl       *template.Template
 	log       *slog.Logger
 }
 
-func NewServer(creators *creator.Store, videos *video.Store, ing *ingest.Service, mediaRoot string, log *slog.Logger) (*Server, error) {
+func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, ing *ingest.Service, mediaRoot string, log *slog.Logger) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	srv := &Server{creators: creators, videos: videos, ingest: ing, mediaRoot: mediaRoot, log: log}
+	srv := &Server{creators: creators, videos: videos, enrich: en, ingest: ing, mediaRoot: mediaRoot, log: log}
 	tpl, err := template.New("").Funcs(funcMap).Funcs(template.FuncMap{
 		"thumbURL": func(v video.Video) string {
 			if !v.ThumbnailPath.Valid {
@@ -64,9 +66,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /{$}", s.redirect("/creators"))
 	mux.HandleFunc("GET /creators", s.listCreators)
 	mux.HandleFunc("POST /creators", s.addCreator)
+	mux.HandleFunc("POST /creators/bulk", s.bulkAddCreators)
 	mux.HandleFunc("GET /creators/{id}", s.creatorDetail)
 	mux.HandleFunc("POST /creators/{id}/fetch", s.fetchNew)
 	mux.HandleFunc("POST /creators/{id}/add-url", s.addByURL)
+	mux.HandleFunc("POST /creators/{id}/update", s.updateCreator)
+	mux.HandleFunc("POST /creators/{id}/delete", s.deleteCreator)
 
 	mux.HandleFunc("GET /videos/{id}", s.player)
 	mux.HandleFunc("POST /videos/{id}/position", s.savePosition)
@@ -85,13 +90,18 @@ func (s *Server) redirect(to string) http.HandlerFunc {
 }
 
 func (s *Server) listCreators(w http.ResponseWriter, r *http.Request) {
-	cs, err := s.creators.List(r.Context())
+	order := creator.SortOrder(r.URL.Query().Get("sort"))
+	if order == "" {
+		order = creator.SortHandle
+	}
+	cs, err := s.creators.List(r.Context(), order)
 	if err != nil {
 		s.serverError(w, err)
 		return
 	}
 	s.render(w, "creators.html", map[string]any{
 		"Creators": cs,
+		"Sort":     string(order),
 		"Flash":    r.URL.Query().Get("flash"),
 		"Error":    r.URL.Query().Get("err"),
 	})
@@ -108,6 +118,67 @@ func (s *Server) addCreator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/creators/%d?flash=Added+%s", c.ID, c.Handle), http.StatusFound)
+}
+
+func (s *Server) bulkAddCreators(w http.ResponseWriter, r *http.Request) {
+	// Accept either a textarea field or a file upload, both named "list".
+	if err := r.ParseMultipartForm(2 << 20); err != nil {
+		// Not multipart? Try plain form.
+		if err := r.ParseForm(); err != nil {
+			s.userError(w, "invalid form")
+			return
+		}
+	}
+
+	var content string
+	if f, _, err := r.FormFile("file"); err == nil {
+		defer f.Close()
+		buf := make([]byte, 1<<20)
+		n, _ := f.Read(buf)
+		content = string(buf[:n])
+	}
+	if extra := r.FormValue("list"); extra != "" {
+		if content != "" {
+			content += "\n"
+		}
+		content += extra
+	}
+	if content == "" {
+		http.Redirect(w, r, "/creators?err=No+list+provided", http.StatusFound)
+		return
+	}
+	res := s.creators.BulkAdd(r.Context(), content)
+	flash := fmt.Sprintf("Added %d, skipped %d, failed %d",
+		len(res.Added), len(res.Skipped), len(res.Failures))
+	http.Redirect(w, r, "/creators?flash="+escape(flash), http.StatusFound)
+}
+
+func (s *Server) updateCreator(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.userError(w, "invalid form")
+		return
+	}
+	if err := s.creators.UpdateDisplayName(r.Context(), id, r.FormValue("display_name")); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/creators/%d?flash=Updated", id), http.StatusFound)
+}
+
+func (s *Server) deleteCreator(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.creators.Delete(r.Context(), id); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/creators?flash=Removed+creator", http.StatusFound)
 }
 
 func (s *Server) creatorDetail(w http.ResponseWriter, r *http.Request) {
@@ -251,6 +322,8 @@ func (s *Server) player(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	summary, _ := s.enrich.GetSummary(r.Context(), v.ID)
+	tags, _ := s.enrich.TagsForVideo(r.Context(), v.ID)
 
 	mediaURL := mediaURLFor(s.mediaRoot, v.FilePath)
 	thumbURL := ""
@@ -262,6 +335,8 @@ func (s *Server) player(w http.ResponseWriter, r *http.Request) {
 		"Video":    v,
 		"Creator":  c,
 		"Watch":    watch,
+		"Summary":  summary,
+		"Tags":     tags,
 		"Prev":     prev, // newer
 		"Next":     next, // older
 		"MediaURL": mediaURL,

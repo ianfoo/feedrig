@@ -36,3 +36,40 @@ CREATE TABLE IF NOT EXISTS watch_state (
     watched_at            INTEGER,
     updated_at            INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS transcripts (
+    video_id     INTEGER PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+    text         TEXT    NOT NULL,
+    language     TEXT,
+    model        TEXT    NOT NULL,
+    generated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS summaries (
+    video_id     INTEGER PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+    summary      TEXT    NOT NULL,
+    notes        TEXT,
+    model        TEXT    NOT NULL,
+    generated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tags (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS video_tags (
+    video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    tag_id   INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    source   TEXT    NOT NULL DEFAULT 'auto',
+    PRIMARY KEY(video_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_video_tags_tag ON video_tags(tag_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+

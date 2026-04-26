@@ -1,27 +1,67 @@
-{{template "head" (dict "Title" "Creators")}}
+{{template "head" (dict "Title" "Creators" "Script" "/static/creators.js")}}
 {{template "flash" .}}
 
 <section class="panel">
-    <h1>Creators</h1>
+    <div class="row-between">
+        <h1>Creators</h1>
+        <nav class="sort-nav">
+            <span class="label">Sort</span>
+            <a href="/creators?sort=handle"      class="{{if eq .Sort "handle"}}active{{end}}">name</a>
+            <a href="/creators?sort=added"       class="{{if eq .Sort "added"}}active{{end}}">added</a>
+            <a href="/creators?sort=last_fetched" class="{{if eq .Sort "last_fetched"}}active{{end}}">last fetched</a>
+        </nav>
+    </div>
+
     <form method="post" action="/creators" class="inline-form">
-        <input name="handle" placeholder="instagram handle or URL" required autofocus>
+        <input name="handle" placeholder="instagram handle or URL" required>
         <input name="display_name" placeholder="display name (optional)">
-        <button type="submit">Add</button>
+        <button type="submit">Add one</button>
     </form>
+
+    <details class="bulk-form">
+        <summary>Bulk add (paste a list or upload a file)</summary>
+        <form method="post" action="/creators/bulk" enctype="multipart/form-data">
+            <textarea name="list" rows="5" placeholder="One per line. Optionally &quot;handle, Display Name&quot;. Comments start with #.&#10;natgeo, National Geographic&#10;samhowell, Sam Howell&#10;# bass guitar:&#10;ariadixongotbass"></textarea>
+            <div class="bulk-actions">
+                <label class="file-label">
+                    <input type="file" name="file" accept=".txt,.csv,text/plain,text/csv">
+                    <span>Or upload a .txt / .csv</span>
+                </label>
+                <button type="submit" class="primary">Add all</button>
+            </div>
+        </form>
+    </details>
 </section>
 
 <section class="panel">
+    <div class="row-between">
+        <h2 style="margin:0">{{len .Creators}} creator{{if ne (len .Creators) 1}}s{{end}}</h2>
+        <input id="creator-filter" type="search" placeholder="Filter…" class="filter-input">
+    </div>
+
     {{if .Creators}}
-    <ul class="creator-list">
+    <ul class="creator-list" id="creator-list">
         {{range .Creators}}
-        <li>
-            <a href="/creators/{{.ID}}" class="row">
-                <span class="handle">@{{.Handle}}</span>
-                {{with .DisplayName.String}}<span class="dn">{{.}}</span>{{end}}
+        <li data-handle="{{.Handle}}" data-name="{{.DisplayName.String}}">
+            <div class="creator-row">
+                <a href="/creators/{{.ID}}" class="creator-link">
+                    <span class="handle">@{{.Handle}}</span>
+                    {{with .DisplayName.String}}<span class="dn">{{.}}</span>{{end}}
+                </a>
                 <span class="meta">
-                    {{if .LastFetchedAt.Valid}}last fetched {{humanTime .LastFetchedAt.Int64}}{{else}}never fetched{{end}}
+                    {{if .LastFetchedAt.Valid}}fetched {{humanTime .LastFetchedAt.Int64}}{{else}}never fetched{{end}}
                 </span>
-            </a>
+                <details class="row-actions">
+                    <summary>⋯</summary>
+                    <form method="post" action="/creators/{{.ID}}/update" class="inline-form">
+                        <input name="display_name" value="{{.DisplayName.String}}" placeholder="display name">
+                        <button type="submit">Save</button>
+                    </form>
+                    <form method="post" action="/creators/{{.ID}}/delete" onsubmit="return confirm('Remove @{{.Handle}}? Their downloaded videos remain (cascade delete is off).')">
+                        <button type="submit" class="danger">Remove</button>
+                    </form>
+                </details>
+            </div>
         </li>
         {{end}}
     </ul>

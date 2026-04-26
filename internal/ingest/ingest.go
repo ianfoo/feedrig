@@ -35,12 +35,19 @@ type DownloadResult struct {
 	ThumbnailPath   string // absolute path on disk, if any
 }
 
+// Enricher is the small surface ingest needs from the enrichment worker.
+// Defined locally to avoid an import cycle with internal/enrich.
+type Enricher interface {
+	Enqueue(videoID int64)
+}
+
 // Service orchestrates discovery + download + persistence.
 type Service struct {
 	disc      Discoverer
 	dl        Downloader
 	creators  *creator.Store
 	videos    *video.Store
+	enricher  Enricher
 	mediaRoot string
 	log       *slog.Logger
 }
@@ -51,6 +58,10 @@ func NewService(disc Discoverer, dl Downloader, creators *creator.Store, videos 
 	}
 	return &Service{disc: disc, dl: dl, creators: creators, videos: videos, mediaRoot: mediaRoot, log: log}
 }
+
+// SetEnricher wires the enrichment worker; new downloads will be enqueued.
+// Safe to leave unset; the service degrades to no enrichment.
+func (s *Service) SetEnricher(e Enricher) { s.enricher = e }
 
 // FetchNewForCreator discovers recent posts for the creator and downloads any
 // not yet stored. Returns the count of newly added videos. Discovery failures
@@ -131,6 +142,9 @@ func (s *Service) fetchURL(ctx context.Context, c *creator.Creator, url string) 
 		return nil, fmt.Errorf("persist: %w", err)
 	}
 	v.ID = id
+	if s.enricher != nil {
+		s.enricher.Enqueue(id)
+	}
 	return v, nil
 }
 

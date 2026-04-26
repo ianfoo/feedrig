@@ -62,9 +62,25 @@ func (s *Store) Add(ctx context.Context, input, displayName string) (*Creator, e
 	return &Creator{ID: id, Handle: handle, DisplayName: dn, ProfileURL: profileURL, AddedAt: time.Unix(now, 0)}, nil
 }
 
-func (s *Store) List(ctx context.Context) ([]Creator, error) {
+type SortOrder string
+
+const (
+	SortHandle      SortOrder = "handle"
+	SortAdded       SortOrder = "added"
+	SortLastFetched SortOrder = "last_fetched"
+)
+
+func (s *Store) List(ctx context.Context, order SortOrder) ([]Creator, error) {
+	orderBy := "handle COLLATE NOCASE"
+	switch order {
+	case SortAdded:
+		orderBy = "added_at DESC"
+	case SortLastFetched:
+		// NULL last_fetched_at sorts at the end.
+		orderBy = "last_fetched_at IS NULL, last_fetched_at DESC"
+	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, handle, display_name, profile_url, added_at, last_fetched_at FROM creators ORDER BY handle`,
+		`SELECT id, handle, display_name, profile_url, added_at, last_fetched_at FROM creators ORDER BY `+orderBy,
 	)
 	if err != nil {
 		return nil, err
@@ -106,6 +122,65 @@ func (s *Store) MarkFetched(ctx context.Context, id int64) error {
 		time.Now().Unix(), id,
 	)
 	return err
+}
+
+func (s *Store) Delete(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM creators WHERE id = ?`, id)
+	return err
+}
+
+func (s *Store) UpdateDisplayName(ctx context.Context, id int64, name string) error {
+	var dn sql.NullString
+	if name = strings.TrimSpace(name); name != "" {
+		dn = sql.NullString{String: name, Valid: true}
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE creators SET display_name = ? WHERE id = ?`, dn, id)
+	return err
+}
+
+// BulkAddResult summarizes a bulk-add operation. Errors per line so the
+// caller can surface a partial-success message in the UI.
+type BulkAddResult struct {
+	Added     []Creator
+	Skipped   []string // already-existed handles
+	Failures  []BulkFailure
+}
+
+type BulkFailure struct {
+	Input string
+	Err   string
+}
+
+// BulkAdd parses the input string as one-handle-per-line, ignores blank
+// lines and lines starting with '#', and adds each. Duplicates are silently
+// skipped (recorded in Skipped). Per-line failures don't abort the batch.
+func (s *Store) BulkAdd(ctx context.Context, raw string) BulkAddResult {
+	var res BulkAddResult
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Allow "handle, Display Name" syntax for CSV-style input.
+		var handle, display string
+		if i := strings.Index(line, ","); i >= 0 {
+			handle = strings.TrimSpace(line[:i])
+			display = strings.TrimSpace(line[i+1:])
+		} else {
+			handle = line
+		}
+		c, err := s.Add(ctx, handle, display)
+		if err != nil {
+			if errors.Is(err, ErrExists) {
+				res.Skipped = append(res.Skipped, handle)
+				continue
+			}
+			res.Failures = append(res.Failures, BulkFailure{Input: line, Err: err.Error()})
+			continue
+		}
+		res.Added = append(res.Added, *c)
+	}
+	return res
 }
 
 var (
