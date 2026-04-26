@@ -99,6 +99,14 @@ func (w *Worker) rescan(ctx context.Context) {
 // Wait blocks until Run has returned. Safe to call multiple times.
 func (w *Worker) Wait() { w.wg.Wait() }
 
+// ProcessOne runs the enrichment pipeline synchronously on a single video.
+// Suited for the `feedrig enrich <id>` subcommand: cron / one-shot
+// invocations that want a definite return rather than a long-running queue.
+// Returns when the pipeline finishes or context is canceled.
+func (w *Worker) ProcessOne(ctx context.Context, videoID int64) {
+	w.process(ctx, videoID)
+}
+
 func (w *Worker) process(ctx context.Context, videoID int64) {
 	log := w.log().With("video_id", videoID)
 	if err := w.Enrich.SetEnrichmentState(ctx, videoID, StateRunning, ""); err != nil {

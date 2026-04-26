@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,13 +30,25 @@ import (
 )
 
 func main() {
-	// Subcommand dispatch: `feedrig mcp ...` runs the MCP stdio server
-	// instead of the HTTP server. We handle this before flag.Parse so the
-	// MCP path can have its own narrow flag set.
-	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
-		os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
-		runMCP()
-		return
+	// Subcommand dispatch: `feedrig <cmd> ...` runs that mode and exits.
+	// The default (no subcommand) is the long-running HTTP+scheduler mode.
+	if len(os.Args) >= 2 {
+		cmd := os.Args[1]
+		switch cmd {
+		case "mcp", "sweep", "poll", "enrich":
+			os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
+			switch cmd {
+			case "mcp":
+				runMCP()
+			case "sweep":
+				runSweep()
+			case "poll":
+				runPoll()
+			case "enrich":
+				runEnrich()
+			}
+			return
+		}
 	}
 
 	addr := flag.String("addr", "127.0.0.1:7777", "listen address")
@@ -140,6 +154,131 @@ func main() {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutCtx)
+}
+
+// runSweep performs one TTL sweep pass and exits. Suited for cron / serverless
+// schedule (EventBridge, Cloud Scheduler) where a long-running ticker would
+// be wasteful.
+func runSweep() {
+	dataDir := flag.String("data", "data", "directory holding feedrig.db")
+	flag.Parse()
+
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	conn, err := db.Open(filepath.Join(*dataDir, "feedrig.db"))
+	if err != nil {
+		log.Error("open db", "err", err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	sw := &ttl.Sweeper{
+		DB:       conn,
+		Videos:   video.NewStore(conn),
+		Settings: settings.NewStore(conn),
+		Log:      log,
+	}
+	res, err := sw.SweepOnce(context.Background())
+	if err != nil {
+		log.Error("sweep", "err", err)
+		os.Exit(1)
+	}
+	log.Info("sweep done", "aged", res.Aged, "archived", res.Archived, "purged", res.Purged)
+}
+
+// runPoll fetches new videos for one creator and exits. Useful for cron
+// per-creator schedules or for a "force poll this one now" admin path.
+func runPoll() {
+	dataDir := flag.String("data", "data", "directory holding feedrig.db")
+	mediaDir := flag.String("media", "media", "directory for downloaded videos")
+	cookies := flag.String("cookies", "", "optional yt-dlp cookies file")
+	chromePath := flag.String("chrome", "", "path to chromium binary")
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: feedrig poll [flags] <handle>")
+		os.Exit(2)
+	}
+	handle := flag.Arg(0)
+
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	conn, err := db.Open(filepath.Join(*dataDir, "feedrig.db"))
+	if err != nil {
+		log.Error("open db", "err", err); os.Exit(1)
+	}
+	defer conn.Close()
+
+	mediaAbs, _ := filepath.Abs(*mediaDir)
+	creators := creator.NewStore(conn)
+	videos := video.NewStore(conn)
+
+	disc := buildDiscoverer("auto", *chromePath, log)
+	svc := ingest.NewService(disc, ingest.YtDlpDownloader{CookieFile: *cookies}, creators, videos, mediaAbs, log)
+
+	// Look up by handle. If absent, register first so the IDs are stable.
+	cs, _ := creators.List(context.Background(), creator.SortHandle)
+	var c *creator.Creator
+	for i := range cs {
+		if cs[i].Handle == handle {
+			c = &cs[i]
+			break
+		}
+	}
+	if c == nil {
+		newC, err := creators.Add(context.Background(), handle, "")
+		if err != nil {
+			log.Error("add creator", "err", err); os.Exit(1)
+		}
+		c = newC
+	}
+	added, err := svc.FetchNewForCreator(context.Background(), c)
+	if err != nil {
+		log.Error("poll", "err", err); os.Exit(1)
+	}
+	log.Info("poll done", "handle", handle, "added", added)
+}
+
+// runEnrich runs the transcribe→summarize→tag pipeline on one video
+// synchronously and exits. The `--summarizer` / `--ollama-*` /
+// `--openrouter-*` flags from the long-running mode are reused.
+func runEnrich() {
+	dataDir := flag.String("data", "data", "directory holding feedrig.db")
+	summarizer := flag.String("summarizer", "auto", "summarizer: auto|ollama|openrouter|stub|none")
+	ollamaURL := flag.String("ollama-url", "http://localhost:11434", "Ollama base URL")
+	ollamaModel := flag.String("ollama-model", "llama3.2:3b", "Ollama model id")
+	openrouterModel := flag.String("openrouter-model", "anthropic/claude-3.5-haiku", "OpenRouter model id")
+	whisperModel := flag.String("whisper-model", "", "path to whisper.cpp model")
+	categoriesFlag := flag.String("categories", "news,political-commentary,music,bass-guitar,baking,pizza,food,comedy,tech", "category menu for the summarizer")
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: feedrig enrich [flags] <video-id>")
+		os.Exit(2)
+	}
+	id, err := strconv.ParseInt(flag.Arg(0), 10, 64)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "video-id must be an integer")
+		os.Exit(2)
+	}
+
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	conn, err := db.Open(filepath.Join(*dataDir, "feedrig.db"))
+	if err != nil {
+		log.Error("open db", "err", err); os.Exit(1)
+	}
+	defer conn.Close()
+
+	worker := &enrich.Worker{
+		Videos:      video.NewStore(conn),
+		Enrich:      enrich.NewStore(conn),
+		Transcriber: buildTranscriber(*whisperModel),
+		Summarizer:  buildSummarizer(*summarizer, *ollamaURL, *ollamaModel, *openrouterModel, log),
+		Categories:  splitCSV(*categoriesFlag),
+		Log:         log,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	worker.ProcessOne(ctx, id)
+	log.Info("enrich done", "video_id", id)
 }
 
 // runMCP is the stdio MCP-server subcommand. Reads JSON-RPC from stdin and
