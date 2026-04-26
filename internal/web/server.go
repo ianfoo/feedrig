@@ -119,6 +119,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /groups/{slug}/update", s.groupUpdate)
 	mux.HandleFunc("POST /groups/{slug}/delete", s.groupDelete)
 	mux.HandleFunc("POST /groups/{slug}/members", s.groupSetMembers)
+	mux.HandleFunc("POST /groups/{slug}/reorder", s.groupReorder)
 	mux.HandleFunc("GET /groups/{slug}/digest", s.groupDigest)
 	mux.HandleFunc("GET /groups/{slug}/rss", s.groupRSS)
 
@@ -885,6 +886,31 @@ func (s *Server) groupDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/groups?flash=Deleted", http.StatusFound)
+}
+
+func (s *Server) groupReorder(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.userError(w, "invalid form")
+		return
+	}
+	dir := -1
+	if r.FormValue("dir") == "down" {
+		dir = 1
+	}
+	if err := s.groups.Reorder(r.Context(), g.ID, dir); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/groups", http.StatusFound)
 }
 
 func (s *Server) groupSetMembers(w http.ResponseWriter, r *http.Request) {

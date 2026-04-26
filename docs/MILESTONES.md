@@ -237,6 +237,7 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 - [x] **Scheduler hot-reload**: `Scheduler.Reload()` cancels per-creator workers and respawns from a fresh DB read. Wired into the add / bulk-add / import / delete / cadence handlers via a small `SchedulerReloader` interface, so changes take effect without a server restart. Cadence-page hint updated.
 - [x] **Creator-level top-tags aggregation**: `enrich.Store.TopTagsForCreator(id, limit)` computes the most common tags across a creator's videos. Surfaced as a "Topics:" line with chips on the creator detail page (each chip shows the tag name + a count badge). Cheap content pre-categorization without re-running the LLM.
 - [x] **RSS per group**: `GET /groups/{slug}/rss` emits an RSS 2.0 feed (title = video title, description = summary if present else original caption, pubDate = posted_at) so any reader (NetNewsWire, Feedbin, etc.) can subscribe. RSS button added to the group feed header alongside Digest / Edit.
+- [x] **Group reorder**: up/down arrows on the groups list (`POST /groups/{slug}/reorder` with `dir=up|down`), three-step swap of the `position` column inside a transaction so it's safe under any future UNIQUE constraint. Edge moves are silent no-ops.
 
 ### Smoke-tested end-to-end
 

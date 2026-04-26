@@ -35,6 +35,10 @@
         {{range .Groups}}
         <li>
             <div class="creator-row">
+                <div class="reorder-arrows">
+                    <form method="post" action="/groups/{{.Slug}}/reorder"><input type="hidden" name="dir" value="up"><button type="submit" title="Move up">▲</button></form>
+                    <form method="post" action="/groups/{{.Slug}}/reorder"><input type="hidden" name="dir" value="down"><button type="submit" title="Move down">▼</button></form>
+                </div>
                 <a href="/groups/{{.Slug}}" class="creator-link">
                     <span class="handle">{{.Name}}</span>
                     <span class="dn">{{.RecencyDays}}d window</span>

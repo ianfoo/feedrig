@@ -311,6 +311,19 @@ button.danger:hover { background: var(--danger); color: #1a0808; }
 .match-field { color: var(--accent); }
 .search-excerpt { color: var(--fg); margin-top: 0.25rem; font-size: 0.9rem; line-height: 1.45; }
 .search-list a:hover .search-excerpt { background: var(--panel-2); border-radius: 4px; padding: 0.2rem 0.4rem; }
+
+.reorder-arrows { display: flex; flex-direction: column; gap: 0.1rem; margin-right: 0.4rem; }
+.reorder-arrows form { display: inline; margin: 0; }
+.reorder-arrows button {
+    padding: 0 0.3rem;
+    font-size: 0.7rem;
+    line-height: 1.1;
+    color: var(--fg-dim);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+.reorder-arrows button:hover { color: var(--fg); background: var(--panel-2); }
 .card-summary { color: var(--fg-dim); font-size: 0.85rem; margin-top: 0.3rem; line-height: 1.35; max-height: 4em; overflow: hidden; }
 .member-list { list-style: none; padding: 0; margin: 0.5rem 0; }
 .member-list li { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }

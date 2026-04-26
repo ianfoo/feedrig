@@ -142,6 +142,57 @@ func (s *Store) List(ctx context.Context) ([]Group, error) {
 	return out, rows.Err()
 }
 
+// Reorder swaps the position column with the immediate neighbor in the
+// requested direction. dir = -1 moves up (toward 0), dir = +1 moves down.
+// No-op if already at the edge.
+func (s *Store) Reorder(ctx context.Context, id int64, dir int) error {
+	if dir != -1 && dir != 1 {
+		return errors.New("dir must be -1 or +1")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var pos int
+	if err := tx.QueryRowContext(ctx, `SELECT position FROM groups WHERE id = ?`, id).Scan(&pos); err != nil {
+		return err
+	}
+
+	op := "<"
+	order := "DESC"
+	if dir == 1 {
+		op = ">"
+		order = "ASC"
+	}
+	var neighborID int64
+	var neighborPos int
+	q := fmt.Sprintf(`SELECT id, position FROM groups WHERE position %s ? ORDER BY position %s LIMIT 1`, op, order)
+	err = tx.QueryRowContext(ctx, q, pos).Scan(&neighborID, &neighborPos)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // already at the edge
+	}
+	if err != nil {
+		return err
+	}
+
+	// Three-step swap to avoid violating any UNIQUE constraint that
+	// position might pick up later. Today position isn't UNIQUE so a
+	// direct two-step would work, but the three-step is robust.
+	const sentinel = -1
+	if _, err := tx.ExecContext(ctx, `UPDATE groups SET position = ? WHERE id = ?`, sentinel, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE groups SET position = ? WHERE id = ?`, pos, neighborID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE groups SET position = ? WHERE id = ?`, neighborPos, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) MarkVisited(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE groups SET last_visited_at = ? WHERE id = ?`, time.Now().Unix(), id)
 	return err
