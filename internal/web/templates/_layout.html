@@ -4,11 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{.Title}} · feedrig</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
     <header class="topbar">
-        <a href="/creators" class="brand">feedrig</a>
+        <a href="/creators" class="brand">
+            <img src="/static/logo.svg" alt="" class="brand-logo">
+            <span>feedrig</span>
+        </a>
         {{with .Crumb}}<span class="crumb">{{.}}</span>{{end}}
         <nav class="nav-right">
             <a href="/groups">Groups</a>

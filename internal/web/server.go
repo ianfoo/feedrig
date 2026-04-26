@@ -72,6 +72,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /creators", s.addCreator)
 	mux.HandleFunc("POST /creators/bulk", s.bulkAddCreators)
 	mux.HandleFunc("GET /creators/{id}", s.creatorDetail)
+	mux.HandleFunc("GET /creators/{id}/history", s.creatorHistory)
 	mux.HandleFunc("POST /creators/{id}/fetch", s.fetchNew)
 	mux.HandleFunc("POST /creators/{id}/add-url", s.addByURL)
 	mux.HandleFunc("POST /creators/{id}/update", s.updateCreator)
@@ -82,6 +83,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /videos/{id}/save", s.saveVideo)
 	mux.HandleFunc("POST /videos/{id}/delete", s.deleteVideo)
 	mux.HandleFunc("POST /videos/{id}/restore", s.restoreVideo)
+	mux.HandleFunc("POST /videos/{id}/redownload", s.redownloadVideo)
 
 	mux.HandleFunc("GET /pending", s.pendingList)
 	mux.HandleFunc("GET /settings", s.settingsPage)
@@ -415,6 +417,67 @@ func (s *Server) deleteVideo(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/creators/%d?flash=Moved+to+pending+deletion", creatorID), http.StatusFound)
 }
 
+func (s *Server) redownloadVideo(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(w, r, "id")
+	if !ok {
+		return
+	}
+	v, err := s.videos.Get(r.Context(), id)
+	if errors.Is(err, video.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
+	defer cancel()
+	if err := s.ingest.Redownload(ctx, v); err != nil {
+		http.Redirect(w, r, fmt.Sprintf("/videos/%d?err=%s", id, escape(err.Error())), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/videos/%d?flash=Re-downloaded", id), http.StatusFound)
+}
+
+func (s *Server) creatorHistory(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(w, r, "id")
+	if !ok {
+		return
+	}
+	c, err := s.creators.Get(r.Context(), id)
+	if errors.Is(err, creator.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	vids, err := s.videos.ListForCreatorAll(r.Context(), id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	type row struct {
+		Video   video.Video
+		Tags    []enrich.Tag
+		Summary *enrich.Summary
+	}
+	rows := make([]row, len(vids))
+	for i, v := range vids {
+		tags, _ := s.enrich.TagsForVideo(r.Context(), v.ID)
+		summary, _ := s.enrich.GetSummary(r.Context(), v.ID)
+		rows[i] = row{Video: v, Tags: tags, Summary: summary}
+	}
+	s.render(w, "creator_history.html", map[string]any{
+		"Creator": c,
+		"Rows":    rows,
+		"Flash":   r.URL.Query().Get("flash"),
+		"Error":   r.URL.Query().Get("err"),
+	})
+}
+
 func (s *Server) restoreVideo(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathInt(w, r, "id")
 	if !ok {
@@ -449,8 +512,8 @@ func (s *Server) pendingList(w http.ResponseWriter, r *http.Request) {
 	}
 	s.render(w, "pending.html", map[string]any{
 		"Rows":          rows,
-		"TTLDays":       int(ttlDays.Hours() / 24),
-		"GraceDays":     int(graceDays.Hours() / 24),
+		"TTLDays":   settings.DaysFromDuration(ttlDays),
+		"GraceDays": settings.DaysFromDuration(graceDays),
 		"Flash":         r.URL.Query().Get("flash"),
 		"Error":         r.URL.Query().Get("err"),
 	})
@@ -461,8 +524,8 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	ttl, grace := s.settings.TTL(r.Context())
 	s.render(w, "settings.html", map[string]any{
 		"PollHours": int(pollInt.Hours()),
-		"TTLDays":   int(ttl.Hours() / 24),
-		"GraceDays": int(grace.Hours() / 24),
+		"TTLDays":   settings.DaysFromDuration(ttl),
+		"GraceDays": settings.DaysFromDuration(grace),
 		"Flash":     r.URL.Query().Get("flash"),
 		"Error":     r.URL.Query().Get("err"),
 	})
@@ -742,7 +805,8 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	graceDays, _ := strconv.Atoi(r.FormValue("grace_days"))
 
 	if pollHours > 0 {
-		_ = s.settings.Set(r.Context(), settings.KeyDefaultPollInterval, strconv.Itoa(pollHours*3600))
+		seconds := int((time.Duration(pollHours) * time.Hour).Seconds())
+		_ = s.settings.Set(r.Context(), settings.KeyDefaultPollInterval, strconv.Itoa(seconds))
 	}
 	if ttlDays > 0 {
 		_ = s.settings.Set(r.Context(), settings.KeyTTLDays, strconv.Itoa(ttlDays))

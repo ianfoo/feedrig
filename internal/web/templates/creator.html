@@ -10,9 +10,12 @@
                 {{if .Creator.LastFetchedAt.Valid}}Last fetched {{humanTime .Creator.LastFetchedAt.Int64}}{{else}}Never fetched{{end}}
             </p>
         </div>
-        <form method="post" action="/creators/{{.Creator.ID}}/fetch">
-            <button type="submit" class="primary">Fetch new</button>
-        </form>
+        <div class="creator-actions">
+            <a class="nav-btn" href="/creators/{{.Creator.ID}}/history">History</a>
+            <form method="post" action="/creators/{{.Creator.ID}}/fetch">
+                <button type="submit" class="primary">Fetch new</button>
+            </form>
+        </div>
     </div>
 </section>
 

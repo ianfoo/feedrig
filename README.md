@@ -37,7 +37,9 @@ Flags:
 | `-cookies` | (empty) | Optional `yt-dlp`-format cookie file for IG auth |
 | `-discoverer` | `auto` | `auto` (chromedp → instago) / `chromedp` / `instago` / `none` |
 | `-chrome` | (empty) | Path to Chromium/Chrome (default: search PATH) |
-| `-summarizer` | `stub` | `stub` (offline) / `openrouter` / `none` |
+| `-summarizer` | `auto` | `auto` (probes ollama then falls back to stub) / `ollama` / `openrouter` / `stub` / `none` |
+| `-ollama-url` | `http://localhost:11434` | Ollama base URL |
+| `-ollama-model` | `llama3.2:3b` | Ollama model (must be pulled: `ollama pull <name>`) |
 | `-openrouter-model` | `anthropic/claude-3.5-haiku` | OpenRouter model id (set `OPENROUTER_API_KEY`) |
 | `-whisper-model` | (empty) | Path to a `whisper.cpp` `.bin` model; empty disables transcription |
 | `-categories` | (preset list) | Comma-separated category menu shown to the summarizer |

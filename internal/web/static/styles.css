@@ -51,6 +51,16 @@ a:hover { text-decoration: underline; }
     font-weight: 700;
     font-size: 1.1rem;
     letter-spacing: 0.02em;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--fg);
+}
+.brand:hover { text-decoration: none; }
+.brand-logo {
+    width: 1.4rem;
+    height: 1.4rem;
+    color: var(--accent);
 }
 .crumb { color: var(--fg-dim); }
 
@@ -290,6 +300,36 @@ button.danger:hover { background: var(--danger); color: #1a0808; }
 .m-dn { color: var(--fg-dim); flex: 1; min-width: 0; }
 .m-toggle { display: flex; align-items: center; gap: 0.25rem; color: var(--fg-dim); font-size: 0.85rem; }
 .danger-summary { color: var(--danger); cursor: pointer; }
+
+.creator-actions { display: flex; gap: 0.5rem; align-items: center; }
+
+.archived-shell {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #000;
+}
+.archived-thumb { width: 100%; height: 100%; object-fit: cover; opacity: 0.35; }
+.archived-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 1.25rem;
+    gap: 0.6rem;
+}
+.archived-overlay h3 { margin: 0; color: var(--warn); }
+.archived-overlay p { margin: 0; max-width: 32rem; color: var(--fg); }
+
+.state-badge { background: var(--panel-2); color: var(--fg-dim); }
+.state-badge.state-saved { background: var(--ok); color: #0b1220; }
+.state-badge.state-archived { background: var(--warn); color: #2a1f00; }
+.state-badge.state-pending_deletion { background: var(--danger); color: #1a0808; }
 kbd {
     background: var(--panel-2);
     border: 1px solid var(--border);

@@ -45,9 +45,8 @@ func (s *Sweeper) Run(ctx context.Context) {
 
 // SweepResult is exposed for testing / introspection.
 type SweepResult struct {
-	Aged    int // active → pending_deletion
-	Removed int // pending_deletion → file removed (state stays pending_deletion in DB; row pruning is a separate pass)
-	Pruned  int // pending_deletion rows whose files no longer exist and which are past grace window
+	Aged     int // active → pending_deletion
+	Archived int // pending_deletion → archived: media file removed, metadata kept for history
 }
 
 func (s *Sweeper) sweep(ctx context.Context) {
@@ -56,8 +55,8 @@ func (s *Sweeper) sweep(ctx context.Context) {
 		s.log().Warn("ttl sweep failed", "err", err)
 		return
 	}
-	if res.Aged > 0 || res.Removed > 0 || res.Pruned > 0 {
-		s.log().Info("ttl sweep", "aged", res.Aged, "removed", res.Removed, "pruned", res.Pruned)
+	if res.Aged > 0 || res.Archived > 0 {
+		s.log().Info("ttl sweep", "aged", res.Aged, "archived", res.Archived)
 	}
 }
 
@@ -80,15 +79,14 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (SweepResult, error) {
 		res.Aged = int(n)
 	}
 
-	// 2) for pending_deletion videos older than (ttl + grace) since
-	// state_changed_at, remove the file from disk and mark state_changed_at
-	// to "now" so we know the file's gone. We don't hard-delete the row yet —
-	// retaining metadata after media removal lets the user see "deleted" in
-	// the UI without storage cost. (TODO v0.3.x: a separate config knob to
-	// hard-delete N days after file removal.)
+	// 2) for pending_deletion videos whose state_changed_at is older than
+	// `grace`, remove the *media file* from disk and flip state to
+	// 'archived'. Metadata (title, description, summary, transcript, tags,
+	// thumbnail) is retained indefinitely so the user can review history
+	// and request a redownload from the original URL.
 	graceCutoff := now.Add(-grace).Unix()
 	rows, err := s.DB.QueryContext(ctx, `
-		SELECT id, file_path, thumbnail_path FROM videos
+		SELECT id, file_path FROM videos
 		WHERE state = 'pending_deletion' AND state_changed_at < ?
 	`, graceCutoff)
 	if err != nil {
@@ -96,14 +94,13 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (SweepResult, error) {
 	}
 	defer rows.Close()
 	type doomed struct {
-		id    int64
-		file  string
-		thumb sql.NullString
+		id   int64
+		file string
 	}
 	var batch []doomed
 	for rows.Next() {
 		var d doomed
-		if err := rows.Scan(&d.id, &d.file, &d.thumb); err != nil {
+		if err := rows.Scan(&d.id, &d.file); err != nil {
 			return res, err
 		}
 		batch = append(batch, d)
@@ -112,22 +109,21 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (SweepResult, error) {
 
 	for _, d := range batch {
 		if d.file != "" {
-			if err := os.Remove(d.file); err == nil || os.IsNotExist(err) {
-				res.Removed++
-			} else {
+			if err := os.Remove(d.file); err != nil && !os.IsNotExist(err) {
 				s.log().Warn("ttl: remove media", "id", d.id, "path", d.file, "err", err)
+				continue
 			}
 		}
-		if d.thumb.Valid && d.thumb.String != "" {
-			_ = os.Remove(d.thumb.String)
-		}
-		// Hard-delete the row. The user has had their grace window;
-		// after that the metadata is no longer useful and just clutters lists.
-		if _, err := s.DB.ExecContext(ctx, `DELETE FROM videos WHERE id = ?`, d.id); err != nil {
-			s.log().Warn("ttl: delete row", "id", d.id, "err", err)
+		// Thumbnail intentionally retained — it's small and helps the
+		// history view stay visually scannable.
+		if _, err := s.DB.ExecContext(ctx,
+			`UPDATE videos SET state = ?, state_changed_at = ? WHERE id = ?`,
+			string(video.StateArchived), now.Unix(), d.id,
+		); err != nil {
+			s.log().Warn("ttl: archive row", "id", d.id, "err", err)
 			continue
 		}
-		res.Pruned++
+		res.Archived++
 	}
 
 	return res, nil

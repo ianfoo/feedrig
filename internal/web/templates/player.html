@@ -5,7 +5,20 @@
         data-resume="{{.Watch.LastPositionSeconds}}"
         {{if .Prev}}data-prev-url="/videos/{{.Prev.ID}}"{{end}}
         {{if .Next}}data-next-url="/videos/{{.Next.ID}}"{{end}}>
+    {{if eq (printf "%s" .Video.State) "archived"}}
+    <div class="archived-shell">
+        {{if .ThumbURL}}<img src="{{.ThumbURL}}" alt="" class="archived-thumb">{{end}}
+        <div class="archived-overlay">
+            <h3>Archived</h3>
+            <p>The media file for this video has been removed by the TTL sweeper. Metadata, summary, and transcript are preserved. Re-download to watch.</p>
+            <form method="post" action="/videos/{{.Video.ID}}/redownload">
+                <button type="submit" class="primary">Re-download</button>
+            </form>
+        </div>
+    </div>
+    {{else}}
     <video id="player" src="{{.MediaURL}}" {{with .ThumbURL}}poster="{{.}}"{{end}} controls preload="metadata"></video>
+    {{end}}
 
     <div class="player-controls">
         <div class="speed-row">

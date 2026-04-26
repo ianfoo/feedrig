@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-label="feedrig">
+    <!-- mast -->
+    <line x1="14" y1="6" x2="14" y2="58"/>
+    <!-- jib (horizontal arm) -->
+    <line x1="14" y1="14" x2="56" y2="14"/>
+    <!-- counter-jib (short arm on the left) -->
+    <line x1="14" y1="14" x2="6" y2="14"/>
+    <!-- top tie diagonals giving it the truss/A-frame -->
+    <line x1="14" y1="6" x2="6" y2="14"/>
+    <line x1="14" y1="6" x2="56" y2="14"/>
+    <!-- trolley + hoist cable -->
+    <line x1="46" y1="14" x2="46" y2="32"/>
+    <!-- the load: a stylized "v" for video, hanging from the hook -->
+    <path d="M40 32 L46 40 L52 32 Z"/>
+    <!-- ground -->
+    <line x1="2" y1="58" x2="62" y2="58"/>
+</svg>

@@ -201,15 +201,38 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 
 ---
 
+## v0.5.1 — Polish: history retention, ollama, logo, magic-number sweep
+
+**Status:** ✅ shipped.
+
+**Features:**
+
+- [x] **History retention.** TTL sweeper now archives (`state='archived'`) instead of hard-deleting: media file removed, metadata + summary + transcript + thumbnail kept indefinitely. New `creator/{id}/history` page lists all videos including archived; `POST /videos/{id}/redownload` rehydrates an archived video by re-running the downloader on its original URL. Player page shows a "Re-download" prompt instead of the player when state is `archived`. Supersedes ADR-009 with ADR-013.
+- [x] **Ollama summarizer.** `summarize.Ollama` HTTP client (`/api/generate` with JSON output mode). New `--summarizer auto` (default) probes `/api/tags` at startup; if Ollama is reachable it's selected, otherwise falls back to the offline `Stub` with a log line explaining how to enable it. New flags: `--ollama-url`, `--ollama-model`.
+- [x] **Logo + favicon.** Crane-rig SVG (mast, jib, hoist cable, hanging "v" load). Linked into the topbar and as `link[rel=icon]`. State badges added for `saved` / `archived` / `pending_deletion` so the history view is scannable at a glance.
+- [x] **Magic-number cleanup** (per user feedback): `settings.Day`, `settings.DurationFromDays`, `settings.DaysFromDuration` consolidate the day-vs-hour-vs-second arithmetic. `groups.DefaultRecencyDays` replaces the `recency = 7` literals. Web layer's `int(x.Hours()/24)` / `pollHours*3600` rewritten to use the helpers.
+- [x] **Doc drift fixed:** `docs/ARCHITECTURE.md` no longer claims the SPA shipped at v0.5; correctly states "v0.6 (planned)".
+- [x] **ADR-012 captured** documenting the domain-types-vs-SQL-types refactor plan (deferred to v0.6 per the user's "not going to sweat it too hard").
+
+**Smoke test:**
+
+- Pending-deletion row with state_changed_at 9 days ago, grace_days=1 → sweep transitions to `archived` (`archived=1`), file removed, summary preserved in DB. ✅
+- Player page for the archived row renders the archived-shell with Re-download. ✅
+- `/creators/{id}/history` lists the archived video with state badge + summary. ✅
+- `--summarizer auto` with Ollama not running logs the helpful message and uses Stub. ✅
+
+---
+
 ## v0.6 — Onboarding, native shell, hosted (planned)
 
 **Status:** ⏳ planned. Lots of ideas; bullets are unprioritized.
 
-### From the user mid-v0.5
+### From the user mid-v0.5 / v0.5.1
 
 - **Pre-categorization of currently-followed creators.** When the user adds a creator, optionally fetch their bio + link-in-bio (Linktree, Beacons, etc.) and use the LLM to suggest categories the user can accept / reject. Dramatically cuts initial-setup friction.
 - **"Who I follow" import path.** No public API; Instagram does provide a "Download your data" feature that exports a `following.html` / `following.json`. Add an import endpoint that consumes that file and bulk-creates creators.
 - **Pre-categorization heuristic from existing posts.** First N videos through the enrichment pipeline already produce tags; aggregate those into a "primary topics" suggestion for the creator card.
+- **MCP server over the transcript / summary corpus.** Expose a small MCP tool surface so an LLM can run topic searches across the user's library ("find videos that talk about chinese cooking technique"). Underlying query is SQL `LIKE` / FTS5 over `transcripts.text` and `summaries.summary`; MCP is just the protocol shell. Probably ships alongside the React SPA so the user has a UI to enable/disable it.
 - **Out of scope (declined):** automated burner-account creation, multi-account work distribution to evade rate limits. Both are TOS-violating, technically fragile (single-IP sock puppets ban together), and approach detection-evasion. The legitimate path is one user-created burner with cookies passed via `--cookies`.
 
 ### Frontend

@@ -15,6 +15,10 @@ const (
 	StateActive          State = "active"
 	StateSaved           State = "saved"
 	StatePendingDeletion State = "pending_deletion"
+	// StateArchived: media file removed by the TTL sweeper, but metadata
+	// (title, description, summary, transcript, tags, thumbnail) is kept
+	// indefinitely. Re-watchable via redownload from the original URL.
+	StateArchived State = "archived"
 )
 
 type Video struct {
@@ -91,14 +95,32 @@ func (s *Store) Get(ctx context.Context, id int64) (*Video, error) {
 	return scanVideo(row)
 }
 
-// ListForCreator returns the creator's videos newest-first, excluding any in
-// the given excluded states (pass StatePendingDeletion to hide soon-to-go).
+// ListForCreator returns the creator's videos newest-first. By default it
+// hides pending-deletion and archived rows from the active feed; pass true
+// for the corresponding flags to include them.
 func (s *Store) ListForCreator(ctx context.Context, creatorID int64, includeDeletionPending bool) ([]Video, error) {
+	return s.listForCreator(ctx, creatorID, includeDeletionPending, false)
+}
+
+// ListForCreatorAll returns every video for the creator, including pending
+// and archived. Used by the history view.
+func (s *Store) ListForCreatorAll(ctx context.Context, creatorID int64) ([]Video, error) {
+	return s.listForCreator(ctx, creatorID, true, true)
+}
+
+func (s *Store) listForCreator(ctx context.Context, creatorID int64, includePending, includeArchived bool) ([]Video, error) {
 	q := selectCols + ` WHERE creator_id = ?`
 	args := []any{creatorID}
-	if !includeDeletionPending {
+	excluded := []string{}
+	if !includePending {
+		excluded = append(excluded, string(StatePendingDeletion))
+	}
+	if !includeArchived {
+		excluded = append(excluded, string(StateArchived))
+	}
+	for _, st := range excluded {
 		q += ` AND state != ?`
-		args = append(args, string(StatePendingDeletion))
+		args = append(args, st)
 	}
 	q += ` ORDER BY COALESCE(posted_at, downloaded_at) DESC, id DESC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -143,6 +165,24 @@ func (s *Store) SetState(ctx context.Context, id int64, state State) error {
 		`UPDATE videos SET state = ?, state_changed_at = ? WHERE id = ?`,
 		string(state), time.Now().Unix(), id,
 	)
+	return err
+}
+
+// UpdateAfterRedownload swaps the on-disk file path and resets state to
+// active after the downloader has fetched a fresh copy. The download_at
+// timestamp is bumped so the TTL clock starts over.
+func (s *Store) UpdateAfterRedownload(ctx context.Context, id int64, filePath, thumbPath string) error {
+	now := time.Now().Unix()
+	var thumb sql.NullString
+	if thumbPath != "" {
+		thumb = sql.NullString{String: thumbPath, Valid: true}
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE videos
+		   SET file_path = ?, thumbnail_path = COALESCE(?, thumbnail_path),
+		       downloaded_at = ?, state = ?, state_changed_at = ?
+		 WHERE id = ?
+	`, filePath, thumb, now, string(StateActive), now, id)
 	return err
 }
 

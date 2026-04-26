@@ -77,8 +77,8 @@ The ingestion service iterates discovered shortcodes, skips any already in the D
 ## Web UI
 
 - v0.1: server-rendered Go templates + minimal vanilla JS for the player. Mobile-responsive via CSS grid + viewport meta.
-- v0.2+: introduce a JSON API surface (`/api/v1/*`) alongside the existing HTML routes.
-- v0.5: ship a React + Vite + TypeScript SPA as the primary UI. Templates retire to a debug surface or are removed.
+- v0.5: JSON API surface introduced at `/api/v1/*` alongside the HTML routes. Same service-layer calls, no logic duplication.
+- v0.6 (planned): React + Vite + TypeScript SPA as the primary UI, Capacitor wrap for native iOS/Android. Templates retire to a debug surface or are removed.
 
 ## Storage
 

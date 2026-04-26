@@ -19,6 +19,9 @@ var migrations = []string{
 	// 3: smart-playlist groups + creator memberships. Tag filters are stored
 	// as comma-separated strings on the group row — they're authoritative
 	// (the canonical tag table is just for normalization on the video side).
+	// recency_days default keeps the SQL self-contained; the Go-side default
+	// (groups.DefaultRecencyDays) is what's used when the column is null on
+	// insert via the store.
 	`CREATE TABLE groups (
 		id              INTEGER PRIMARY KEY AUTOINCREMENT,
 		name            TEXT    NOT NULL,

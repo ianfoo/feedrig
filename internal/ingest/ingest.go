@@ -13,6 +13,7 @@ import (
 	"github.com/ianfoo/feedrig/internal/video"
 )
 
+
 // Discoverer enumerates a creator's recent post shortcodes (newest first).
 // Implementations should be safe to call without authentication.
 type Discoverer interface {
@@ -92,6 +93,29 @@ func (s *Service) FetchNewForCreator(ctx context.Context, c *creator.Creator) (i
 		s.log.Warn("mark fetched", "err", err)
 	}
 	return added, nil
+}
+
+// Redownload fetches a video that's already in the store (typically in the
+// archived state because its media file was reaped by the TTL sweeper),
+// replaces the on-disk file, and resets the row to active. Re-enqueues
+// enrichment so the summary/transcript get a refresh too.
+func (s *Service) Redownload(ctx context.Context, v *video.Video) error {
+	c, err := s.creators.Get(ctx, v.CreatorID)
+	if err != nil {
+		return fmt.Errorf("load creator: %w", err)
+	}
+	outDir := filepath.Join(s.mediaRoot, c.Handle)
+	res, err := s.dl.Download(ctx, v.URL, outDir)
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	if err := s.videos.UpdateAfterRedownload(ctx, v.ID, res.FilePath, res.ThumbnailPath); err != nil {
+		return fmt.Errorf("persist: %w", err)
+	}
+	if s.enricher != nil {
+		s.enricher.Enqueue(v.ID)
+	}
+	return nil
 }
 
 // FetchURL downloads a single post by URL — the manual-paste path. Returns

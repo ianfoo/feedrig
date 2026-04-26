@@ -13,8 +13,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ianfoo/feedrig/internal/settings"
 	"github.com/ianfoo/feedrig/internal/video"
 )
+
+// DefaultRecencyDays is used when a group is created without an explicit
+// window or with a non-positive value.
+const DefaultRecencyDays = 7
 
 type Group struct {
 	ID            int64
@@ -46,7 +51,7 @@ func (s *Store) Create(ctx context.Context, name string, recency int, include, e
 		return nil, errors.New("name required")
 	}
 	if recency <= 0 {
-		recency = 7
+		recency = DefaultRecencyDays
 	}
 	slug := slugify(name)
 	now := time.Now().Unix()
@@ -66,7 +71,7 @@ func (s *Store) Create(ctx context.Context, name string, recency int, include, e
 
 func (s *Store) Update(ctx context.Context, id int64, name string, recency int, include, exclude []string) error {
 	if recency <= 0 {
-		recency = 7
+		recency = DefaultRecencyDays
 	}
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE groups SET name = ?, recency_days = ?, include_tags = ?, exclude_tags = ?
@@ -201,7 +206,7 @@ type FeedQuery struct {
 // Feed returns the videos that match the group's definition + the optional
 // FeedQuery overrides. Results are newest-first.
 func (s *Store) Feed(ctx context.Context, g *Group, q FeedQuery) ([]video.Video, error) {
-	since := time.Now().Add(-time.Duration(g.RecencyDays) * 24 * time.Hour).Unix()
+	since := time.Now().Add(-settings.DurationFromDays(g.RecencyDays)).Unix()
 	if (q.OnlyUnseen || q.OnlyNew) && g.LastVisitedAt.Valid && g.LastVisitedAt.Int64 > since {
 		since = g.LastVisitedAt.Int64
 	}

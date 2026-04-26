@@ -33,7 +33,9 @@ func main() {
 	cookies := flag.String("cookies", "", "optional path to instagram cookies file (yt-dlp format)")
 	discoverer := flag.String("discoverer", "auto", "discovery strategy: auto|chromedp|instago|none")
 	chromePath := flag.String("chrome", "", "path to chromium/chrome binary (default: search PATH)")
-	summarizer := flag.String("summarizer", "stub", "summarizer: stub|openrouter|none")
+	summarizer := flag.String("summarizer", "auto", "summarizer: auto|ollama|openrouter|stub|none (auto = ollama if reachable else stub)")
+	ollamaURL := flag.String("ollama-url", "http://localhost:11434", "Ollama base URL")
+	ollamaModel := flag.String("ollama-model", "llama3.2:3b", "Ollama model id (must be pulled locally first: `ollama pull <name>`)")
 	openrouterModel := flag.String("openrouter-model", "anthropic/claude-3.5-haiku", "OpenRouter model id")
 	whisperModel := flag.String("whisper-model", "", "path to whisper.cpp model (.bin); empty disables transcription")
 	categoriesFlag := flag.String("categories", "news,political-commentary,music,bass-guitar,baking,pizza,food,comedy,tech", "comma-separated category menu shown to the summarizer")
@@ -73,7 +75,7 @@ func main() {
 		Videos:      videos,
 		Enrich:      enrichStore,
 		Transcriber: buildTranscriber(*whisperModel),
-		Summarizer:  buildSummarizer(*summarizer, *openrouterModel),
+		Summarizer:  buildSummarizer(*summarizer, *ollamaURL, *ollamaModel, *openrouterModel, log),
 		Categories:  splitCSV(*categoriesFlag),
 		Log:         log,
 	}
@@ -129,16 +131,34 @@ func main() {
 	_ = httpServer.Shutdown(shutCtx)
 }
 
-func buildSummarizer(name, openrouterModel string) summarize.Summarizer {
+func buildSummarizer(name, ollamaURL, ollamaModel, openrouterModel string, log *slog.Logger) summarize.Summarizer {
 	switch name {
+	case "ollama":
+		return summarize.Ollama{BaseURL: ollamaURL, Model: ollamaModel}
 	case "openrouter":
 		key := os.Getenv("OPENROUTER_API_KEY")
 		return summarize.OpenRouter{APIKey: key, Model: openrouterModel}
 	case "none":
 		return summarize.Noop{}
-	case "stub", "":
+	case "stub":
+		return summarize.Stub{}
+	case "auto", "":
+		// Probe Ollama; if it answers, use it. Otherwise fall back to the
+		// offline Stub so summaries are still produced (even if useless),
+		// rather than silently doing nothing.
+		client := &http.Client{Timeout: 1500 * time.Millisecond}
+		req, _ := http.NewRequest("GET", strings.TrimRight(ollamaURL, "/")+"/api/tags", nil)
+		if resp, err := client.Do(req); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				log.Info("summarizer: ollama detected", "url", ollamaURL, "model", ollamaModel)
+				return summarize.Ollama{BaseURL: ollamaURL, Model: ollamaModel}
+			}
+		}
+		log.Info("summarizer: ollama not reachable; using stub. Run `ollama serve` and `ollama pull " + ollamaModel + "` to enable real summaries.")
 		return summarize.Stub{}
 	default:
+		log.Warn("unknown summarizer; using stub", "value", name)
 		return summarize.Stub{}
 	}
 }

@@ -18,6 +18,10 @@ const (
 	KeyTTLSweepInterval    = "ttl_sweep_interval_seconds"
 )
 
+// Day is a named constant since Go's time package conspicuously omits one,
+// and we deal in days a lot. Keeps callers free of bare 24*time.Hour.
+const Day = 24 * time.Hour
+
 // Defaults — used by getters when the key is absent.
 const (
 	DefaultPollInterval  = 6 * time.Hour
@@ -25,6 +29,11 @@ const (
 	DefaultGraceDays     = 7
 	DefaultSweepInterval = 1 * time.Hour
 )
+
+// DurationFromDays / DaysFromDuration are the small conversion helpers used
+// throughout the app to keep day-vs-hours-vs-seconds arithmetic localized.
+func DurationFromDays(d int) time.Duration { return time.Duration(d) * Day }
+func DaysFromDuration(d time.Duration) int { return int(d / Day) }
 
 type Store struct{ db *sql.DB }
 
@@ -59,8 +68,8 @@ func (s *Store) PollInterval(ctx context.Context) time.Duration {
 func (s *Store) TTL(ctx context.Context) (ttl, grace time.Duration) {
 	ttlV, _ := s.Get(ctx, KeyTTLDays)
 	graceV, _ := s.Get(ctx, KeyGraceDays)
-	ttl = time.Duration(intOr(ttlV, DefaultTTLDays)) * 24 * time.Hour
-	grace = time.Duration(intOr(graceV, DefaultGraceDays)) * 24 * time.Hour
+	ttl = DurationFromDays(intOr(ttlV, DefaultTTLDays))
+	grace = DurationFromDays(intOr(graceV, DefaultGraceDays))
 	return
 }
 

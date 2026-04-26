@@ -119,6 +119,46 @@ Lightweight ADRs. Each entry: what, why, alternatives considered, status.
 
 ---
 
+## ADR-012: Domain types vs. SQL types (cleanup queued, not done in v0.5)
+
+**Decision (deferred to v0.6):** Introduce a domain-types layer (`internal/domain` or per-package `*_domain.go`) that uses idiomatic Go zero values (`time.Time`, `string`, `int64`, `*T` for nullable) instead of `database/sql` types (`sql.NullString`, `sql.NullInt64`). The store packages map between domain types and SQL types at the persistence boundary. Handlers, services, and templates work with domain types only; they should not import `database/sql`.
+
+**Rationale (per user feedback during v0.5):** The current code lets `sql.NullString` leak through every layer — handlers reach into `.DisplayName.String` and `.PostedAt.Valid` directly. That couples the HTTP layer to the database driver, makes tests harder (anything that produces a `Video` has to construct `sql.Null*` zero values), and clutters templates with `.Valid` / `.Int64` accessors. A clean domain layer:
+
+- Tests can `Video{Title: "x"}` instead of `Video{Title: sql.NullString{String: "x", Valid: true}}`.
+- Templates use `{{.Title}}` instead of `{{.Title.String}}`.
+- Swapping the persistence backend (e.g. Postgres) changes only the store package.
+- Repository pattern lands naturally — store packages become an interface implemented today by SQLite, tomorrow by anything else.
+
+**Why deferred:** It's a wide refactor (every store + every handler + every template) and the current code is functional; the user explicitly noted "I'm not going to sweat it too hard." Doing half a migration leaves the codebase worse than either pole.
+
+**Migration plan when picked up:**
+
+1. Define domain types in each existing store package (e.g. `creator.Domain`, `video.Domain`) — keep the SQL-ish `Video` / `Creator` private (`videoRow`, `creatorRow`).
+2. Conversion functions: `toDomain(row)`, `toRow(domain)`.
+3. Update store methods to return domain types.
+4. Update handlers, templates, ingest, summarize, groups, ttl, schedule.
+5. Templates: drop `.Valid` and `.Int64` accessors; use plain field access with `{{with}}` for optionals.
+6. Optional: extract a repository interface so non-SQLite implementations are straightforward.
+
+**Status:** Deferred to v0.6 cleanup. ADR captured so the intent isn't lost.
+
+---
+
+## ADR-013: History retention via `archived` state, not hard delete
+
+**Decision:** When the TTL grace window expires for a `pending_deletion` video, the sweeper transitions state to `archived`, removes the media file from disk, and **keeps everything else** — title, description, summary, transcript, tag assignments, and thumbnail. The row is never hard-deleted by the sweeper.
+
+**Rationale (per user feedback during v0.5):** "I should be able to review the creator and smart playlist histories as far back as we want, even if the corresponding video is deleted." Re-watching an archived video is a redownload of the original URL; the summary already in hand tells the user whether it's worth re-fetching. Storage cost is negligible — text data (summary + transcript) compresses well even uncompressed in SQLite, and thumbnails are small JPEGs.
+
+**Trade-offs:**
+- The `videos` table grows monotonically. SQLite handles this fine for a single-user tool indefinitely (millions of rows is well within budget).
+- If a creator deletes the original post on Instagram, redownload will fail. We surface that as an error on the redownload action; the metadata stays in the row regardless.
+
+**Status:** Accepted; superseded ADR-009 (the hard-delete version).
+
+---
+
 ## ADR-011a: No automated burner-account creation; no multi-account work distribution
 
 **Decision:** feedrig will not include features to:
