@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +19,7 @@ import (
 	"github.com/ianfoo/feedrig/internal/groups"
 	"github.com/ianfoo/feedrig/internal/ingest"
 	"github.com/ianfoo/feedrig/internal/settings"
+	"github.com/ianfoo/feedrig/internal/storage"
 	"github.com/ianfoo/feedrig/internal/video"
 )
 
@@ -41,7 +41,8 @@ type Server struct {
 	groups    *groups.Store
 	ingest    *ingest.Service
 	scheduler SchedulerReloader
-	mediaRoot string
+	mediaRoot string      // local root; still needed for static file serving + key derivation
+	blob      storage.Blob // routes URL generation; LocalFS today, S3 later
 	tpl       *template.Template
 	log       *slog.Logger
 }
@@ -50,13 +51,27 @@ func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, s
 	if log == nil {
 		log = slog.Default()
 	}
-	srv := &Server{creators: creators, videos: videos, enrich: en, settings: st, groups: gr, ingest: ing, mediaRoot: mediaRoot, log: log}
+	srv := &Server{
+		creators:  creators,
+		videos:    videos,
+		enrich:    en,
+		settings:  st,
+		groups:    gr,
+		ingest:    ing,
+		mediaRoot: mediaRoot,
+		blob:      storage.LocalFS{Root: mediaRoot, URLPrefix: "/media"},
+		log:       log,
+	}
 	tpl, err := template.New("").Funcs(funcMap).Funcs(template.FuncMap{
 		"thumbURL": func(v video.Video) string {
 			if !v.ThumbnailPath.Valid {
 				return ""
 			}
-			return mediaURLFor(srv.mediaRoot, v.ThumbnailPath.String)
+			key := storage.KeyFor(srv.mediaRoot, v.ThumbnailPath.String)
+			if key == "" {
+				return ""
+			}
+			return srv.blob.PublicURL(key)
 		},
 	}).ParseFS(assets, "templates/*.html")
 	if err != nil {
@@ -69,6 +84,26 @@ func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, s
 // SetScheduler wires the scheduler so creator-mutating handlers can hot-
 // reload it. Safe to leave unset; reloads simply become no-ops.
 func (s *Server) SetScheduler(r SchedulerReloader) { s.scheduler = r }
+
+// SetBlob overrides the default LocalFS storage. Useful for tests and for a
+// future S3-backed deployment without changing the call sites that already
+// route through s.blob for URL generation.
+func (s *Server) SetBlob(b storage.Blob) {
+	if b != nil {
+		s.blob = b
+	}
+}
+
+// publicURL is the canonical Server-bound helper for turning an absolute
+// on-disk media path (as stored on the videos row) into a URL the user
+// can hit. Today: /media/<rel>. With an S3 backend: a presigned URL.
+func (s *Server) publicURL(absPath string) string {
+	key := storage.KeyFor(s.mediaRoot, absPath)
+	if key == "" {
+		return ""
+	}
+	return s.blob.PublicURL(key)
+}
 
 // reload nudges the scheduler if one is wired. Errors are swallowed since a
 // missed reload only means the change takes effect on next restart.
@@ -430,10 +465,10 @@ func (s *Server) player(w http.ResponseWriter, r *http.Request) {
 	summary, _ := s.enrich.GetSummary(r.Context(), v.ID)
 	tags, _ := s.enrich.TagsForVideo(r.Context(), v.ID)
 
-	mediaURL := mediaURLFor(s.mediaRoot, v.FilePath)
+	mediaURL := s.publicURL(v.FilePath)
 	thumbURL := ""
 	if v.ThumbnailPath.Valid {
-		thumbURL = mediaURLFor(s.mediaRoot, v.ThumbnailPath.String)
+		thumbURL = s.publicURL(v.ThumbnailPath.String)
 	}
 
 	s.render(w, "player.html", map[string]any{
@@ -1031,13 +1066,21 @@ func removeIfPresent(path string) error {
 	return safeRemove(path)
 }
 
-// mediaURLFor turns an absolute file path under mediaRoot into a /media/... URL.
+// mediaURLFor turns an absolute file path under mediaRoot into a public
+// URL via the configured storage backend. Today the backend is LocalFS
+// and the URL is "/media/...". An S3 backend would return a presigned URL.
+//
+// Free function (vs. method) because templates carry it as a func value.
 func mediaURLFor(mediaRoot, absPath string) string {
-	rel, err := filepath.Rel(mediaRoot, absPath)
-	if err != nil {
+	key := storage.KeyFor(mediaRoot, absPath)
+	if key == "" {
 		return ""
 	}
-	return "/media/" + filepath.ToSlash(rel)
+	// Templates are bound at server init with a closure that knows the
+	// active blob. This package-level fallback handles legacy callers
+	// (e.g. handlers that pass mediaRoot rather than the closure) and
+	// always emits the /media/-prefixed local URL.
+	return "/media/" + key
 }
 
 // thumbURL is bound at server init so templates can compute media URLs from

@@ -223,6 +223,33 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 
 ---
 
+## v0.7 — Subcommands, Dockerfile, SMTP digest, storage routing
+
+**Status:** ✅ shipped.
+
+**Features:**
+
+- [x] **Subcommand surface** (per ADR-014): `feedrig sweep`, `feedrig poll <handle>`, `feedrig enrich <id>`, `feedrig digest <slug>`, `feedrig mcp`. Each shares the long-running mode's flag conventions and DB layout. Cron-friendly: `0 8 * * * feedrig digest news --to me@x.com` for a daily news digest. `enrich.Worker.ProcessOne` exposes the synchronous variant of the pipeline.
+- [x] **Dockerfile** (multi-stage: golang:1.24 → debian:bookworm-slim) bundling yt-dlp, ffmpeg, chromium, ca-certificates, tini. Non-root uid=1000. `/data` and `/media` declared volumes. Same image runs the long-running server (default CMD), or any subcommand via `docker run feedrig sweep`. Opens Fargate / Cloud Run / Container Apps deployments.
+- [x] **`internal/notify`**: `Mailer` interface, `SMTPMailer` impl using stdlib `net/smtp` (no SDK deps), `Noop` fallback. STARTTLS on 587 by default; `--smtp-tls` switches to implicit TLS (port 465).
+- [x] **`internal/digest`**: `Renderer` produces `notify.Message` (subject + HTML + plain text) from a group's current state. HTML uses inline styles only.
+- [x] **`feedrig digest <slug>`**: prints text body to stdout if `--to` is empty (cron + pipe to `mail(1)` works); delivers via SMTP otherwise. Reads SMTP config from `FEEDRIG_SMTP_*` env vars when flags are unset.
+- [x] **Storage routing**: `Server.publicURL(absPath)` and the `thumbURL` template helper now go through `storage.Blob.PublicURL` instead of building `/media/...` strings directly. Today the blob is `LocalFS`; swapping in a real S3 impl (with presigned URLs) is a one-liner in `main.go` once the S3 client is wired up. `storage.KeyFor(root, path)` is the seam that converts the absolute file paths still stored in the DB into blob keys. File I/O (yt-dlp writes, http.ServeFile, os.Remove) intentionally stays direct — full read/write routing belongs with the actual S3 deploy story.
+
+**Deferred to v0.8 (when there's a real S3 deployer):**
+
+- Real S3 impl using `aws-sdk-go-v2` or `minio-go`. Currently `storage.S3` returns `ErrNotConfigured` (stub). Adding it is mechanical now that the URL seam is in place.
+- Migrating yt-dlp downloads to write to a staging dir then upload to the blob. Requires a bit of orchestration on the ingest side.
+- Switching `videos.file_path` from absolute paths to blob keys (cleaner schema; would let mediaRoot move between deployments).
+
+**Smoke test:**
+
+- `feedrig sweep`, `enrich`, `poll`, `digest` (text mode) all run end-to-end against a seeded DB. ✅
+- Player media URL via blob: `<video src="/media/test/X.mp4">` and the file serves with HTTP 200. ✅
+- Digest text body renders with title, creator, link, summary, and tags. ✅
+
+---
+
 ## v0.6 — In progress (rolling)
 
 **Status:** 🚧 in progress. Items below tick off as they ship; remainder lives in the unprioritized backlog at the bottom.

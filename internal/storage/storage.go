@@ -29,6 +29,23 @@ type Blob interface {
 	PublicURL(key string) string
 }
 
+// KeyFor turns an absolute file path under root (which may include trailing
+// separators or symlinks) into a forward-slash blob key. Used at the seam
+// where the database still holds absolute paths produced by yt-dlp.
+//
+// Returns "" if path is empty or doesn't sit under root — the caller should
+// fall back to its own URL generation in that case.
+func KeyFor(root, path string) string {
+	if path == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	return filepath.ToSlash(rel)
+}
+
 // LocalFS stores blobs under Root on the local filesystem. Keys are joined
 // to Root and confined via filepath.Clean to avoid traversal.
 type LocalFS struct {
