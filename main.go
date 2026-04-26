@@ -91,7 +91,7 @@ func main() {
 	creators := creator.NewStore(conn)
 	videos := video.NewStore(conn)
 
-	disc := buildDiscoverer(*discoverer, *chromePath, log)
+	disc := buildDiscoverer(*discoverer, *chromePath, *cookies, log)
 	ingestSvc := ingest.NewService(
 		disc,
 		ingest.YtDlpDownloader{CookieFile: *cookies},
@@ -215,7 +215,7 @@ func runPoll() {
 	creators := creator.NewStore(conn)
 	videos := video.NewStore(conn)
 
-	disc := buildDiscoverer("auto", *chromePath, log)
+	disc := buildDiscoverer("auto", *chromePath, *cookies, log)
 	svc := ingest.NewService(disc, ingest.YtDlpDownloader{CookieFile: *cookies}, creators, videos, mediaAbs, log)
 
 	// Look up by handle. If absent, register first so the IDs are stable.
@@ -442,10 +442,15 @@ func splitCSV(s string) []string {
 	return out
 }
 
-func buildDiscoverer(name, chromePath string, log *slog.Logger) ingest.Discoverer {
+func buildDiscoverer(name, chromePath, cookieFile string, log *slog.Logger) ingest.Discoverer {
+	chromedpDisc := ingest.ChromedpDiscoverer{
+		ChromePath: chromePath,
+		MaxScrolls: 1,
+		CookieFile: cookieFile,
+	}
 	switch name {
 	case "chromedp":
-		return ingest.ChromedpDiscoverer{ChromePath: chromePath, MaxScrolls: 1}
+		return chromedpDisc
 	case "instago":
 		return ingest.InstagoDiscoverer{}
 	case "none":
@@ -453,7 +458,7 @@ func buildDiscoverer(name, chromePath string, log *slog.Logger) ingest.Discovere
 	case "auto", "":
 		return ingest.ChainDiscoverer{
 			Steps: []ingest.NamedDiscoverer{
-				{Name: "chromedp", Disc: ingest.ChromedpDiscoverer{ChromePath: chromePath, MaxScrolls: 1}},
+				{Name: "chromedp", Disc: chromedpDisc},
 				{Name: "instago", Disc: ingest.InstagoDiscoverer{}},
 			},
 			Log: log,
@@ -462,7 +467,7 @@ func buildDiscoverer(name, chromePath string, log *slog.Logger) ingest.Discovere
 		log.Warn("unknown discoverer; using auto", "value", name)
 		return ingest.ChainDiscoverer{
 			Steps: []ingest.NamedDiscoverer{
-				{Name: "chromedp", Disc: ingest.ChromedpDiscoverer{ChromePath: chromePath, MaxScrolls: 1}},
+				{Name: "chromedp", Disc: chromedpDisc},
 				{Name: "instago", Disc: ingest.InstagoDiscoverer{}},
 			},
 			Log: log,

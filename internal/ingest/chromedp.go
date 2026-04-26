@@ -1,13 +1,18 @@
 package ingest
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	cdp "github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
@@ -31,6 +36,11 @@ type ChromedpDiscoverer struct {
 	// actions. Defaults: 1.5s–4s. Set both to zero to disable pacing (faster
 	// but more visibly botlike).
 	PacingMin, PacingMax time.Duration
+	// CookieFile is a yt-dlp / curl-compatible Netscape-format cookies.txt.
+	// When set, the listed cookies are injected before navigating to
+	// instagram.com so the profile loads as if a logged-in user is viewing.
+	// Same file format used by --cookies for yt-dlp.
+	CookieFile string
 }
 
 func (d ChromedpDiscoverer) pacingRange() (time.Duration, time.Duration) {
@@ -49,6 +59,70 @@ func (d ChromedpDiscoverer) pacingRange() (time.Duration, time.Duration) {
 
 // shortcodeAnchorRE matches the path of post anchors in the rendered DOM.
 var shortcodeAnchorRE = regexp.MustCompile(`/(?:p|reel|tv)/([A-Za-z0-9_-]+)/?`)
+
+// loadNetscapeCookies parses a yt-dlp / curl-compatible cookies.txt file
+// (Netscape HTTP Cookie File format) into chromedp's CookieParam shape.
+// Lines starting with "#" are comments; "#HttpOnly_" prefix on a domain is
+// a Mozilla extension that we treat as a regular cookie with HttpOnly=true.
+//
+// Format (tab-separated):
+//   domain  domain_specified  path  secure  expiry  name  value
+func loadNetscapeCookies(path string) ([]*network.CookieParam, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var out []*network.CookieParam
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		trim := strings.TrimSpace(line)
+		if trim == "" {
+			continue
+		}
+		httpOnly := false
+		if strings.HasPrefix(trim, "#HttpOnly_") {
+			httpOnly = true
+			trim = strings.TrimPrefix(trim, "#HttpOnly_")
+		} else if strings.HasPrefix(trim, "#") {
+			continue
+		}
+		fields := strings.Split(trim, "\t")
+		if len(fields) < 7 {
+			continue
+		}
+		domain := fields[0]
+		path := fields[2]
+		secure := strings.EqualFold(fields[3], "TRUE")
+		var expires float64
+		if exp, err := strconv.ParseInt(fields[4], 10, 64); err == nil && exp > 0 {
+			expires = float64(exp)
+		}
+		c := &network.CookieParam{
+			Name:     fields[5],
+			Value:    fields[6],
+			Domain:   domain,
+			Path:     path,
+			Secure:   secure,
+			HTTPOnly: httpOnly,
+		}
+		if expires > 0 {
+			cdpExp := cdpTimestampSeconds(expires)
+			c.Expires = &cdpExp
+		}
+		out = append(out, c)
+	}
+	return out, scanner.Err()
+}
+
+// cdpTimestampSeconds — chromedp expects unix-seconds-as-float for
+// CookieParam.Expires. Wrap as a cdp.TimeSinceEpoch so the type aligns.
+func cdpTimestampSeconds(unix float64) cdp.TimeSinceEpoch {
+	return cdp.TimeSinceEpoch(time.Unix(int64(unix), 0))
+}
 
 // jitterSleep is a chromedp action that pauses for a random duration in
 // [mn, mx]. Used between scrolls to look less botlike.
@@ -91,11 +165,23 @@ func (d ChromedpDiscoverer) Recent(ctx context.Context, handle string) ([]string
 	url := "https://www.instagram.com/" + handle + "/"
 	var hrefs []string
 	mn, mx := d.pacingRange()
-	tasks := chromedp.Tasks{
+	tasks := chromedp.Tasks{}
+	if d.CookieFile != "" {
+		cookies, err := loadNetscapeCookies(d.CookieFile)
+		if err != nil {
+			return nil, fmt.Errorf("load cookies: %w", err)
+		}
+		// Inject cookies before any navigation so the first request to
+		// instagram.com already carries the session.
+		tasks = append(tasks, chromedp.ActionFunc(func(ctx context.Context) error {
+			return network.SetCookies(cookies).Do(ctx)
+		}))
+	}
+	tasks = append(tasks,
 		chromedp.Navigate(url),
 		jitterSleep(mn, mx),
 		chromedp.Evaluate(`Array.from(document.querySelectorAll('a[href*="/p/"], a[href*="/reel/"], a[href*="/tv/"]')).map(a => a.getAttribute('href'))`, &hrefs),
-	}
+	)
 	for i := 0; i < d.MaxScrolls; i++ {
 		tasks = append(tasks,
 			chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
