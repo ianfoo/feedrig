@@ -1,0 +1,257 @@
+// Package video persists downloaded video metadata and watch state.
+package video
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+)
+
+type State string
+
+const (
+	StateActive          State = "active"
+	StateSaved           State = "saved"
+	StatePendingDeletion State = "pending_deletion"
+)
+
+type Video struct {
+	ID              int64
+	CreatorID       int64
+	ExternalID      string
+	URL             string
+	Title           sql.NullString
+	Description     sql.NullString
+	DurationSeconds sql.NullInt64
+	PostedAt        sql.NullInt64
+	DownloadedAt    time.Time
+	FilePath        string
+	ThumbnailPath   sql.NullString
+	State           State
+	StateChangedAt  time.Time
+}
+
+func (v Video) Posted() (time.Time, bool) {
+	if !v.PostedAt.Valid {
+		return time.Time{}, false
+	}
+	return time.Unix(v.PostedAt.Int64, 0), true
+}
+
+// SortKey returns the timestamp used to order videos newest-first; falls back
+// to download time when the IG-reported post time is missing.
+func (v Video) SortKey() time.Time {
+	if t, ok := v.Posted(); ok {
+		return t
+	}
+	return v.DownloadedAt
+}
+
+type WatchState struct {
+	VideoID             int64
+	LastPositionSeconds float64
+	Watched             bool
+	WatchedAt           sql.NullInt64
+	UpdatedAt           time.Time
+}
+
+type Store struct{ db *sql.DB }
+
+func NewStore(db *sql.DB) *Store { return &Store{db: db} }
+
+// Insert persists a freshly-downloaded video. Returns the new ID, or
+// ErrDuplicate if (creator_id, external_id) already exists.
+func (s *Store) Insert(ctx context.Context, v *Video) (int64, error) {
+	now := time.Now().Unix()
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO videos(
+			creator_id, external_id, url, title, description,
+			duration_seconds, posted_at, downloaded_at, file_path,
+			thumbnail_path, state, state_changed_at
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		v.CreatorID, v.ExternalID, v.URL, v.Title, v.Description,
+		v.DurationSeconds, v.PostedAt, now, v.FilePath,
+		v.ThumbnailPath, string(StateActive), now,
+	)
+	if err != nil {
+		if isUnique(err) {
+			return 0, ErrDuplicate
+		}
+		return 0, fmt.Errorf("insert video: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	return id, nil
+}
+
+func (s *Store) Get(ctx context.Context, id int64) (*Video, error) {
+	row := s.db.QueryRowContext(ctx, selectCols+` WHERE id = ?`, id)
+	return scanVideo(row)
+}
+
+// ListForCreator returns the creator's videos newest-first, excluding any in
+// the given excluded states (pass StatePendingDeletion to hide soon-to-go).
+func (s *Store) ListForCreator(ctx context.Context, creatorID int64, includeDeletionPending bool) ([]Video, error) {
+	q := selectCols + ` WHERE creator_id = ?`
+	args := []any{creatorID}
+	if !includeDeletionPending {
+		q += ` AND state != ?`
+		args = append(args, string(StatePendingDeletion))
+	}
+	q += ` ORDER BY COALESCE(posted_at, downloaded_at) DESC, id DESC`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Video
+	for rows.Next() {
+		v, err := scanVideo(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *v)
+	}
+	return out, rows.Err()
+}
+
+// ExistingExternalIDs returns the set of external_ids already stored for a
+// creator, so the ingester can skip re-downloading them.
+func (s *Store) ExistingExternalIDs(ctx context.Context, creatorID int64) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT external_id FROM videos WHERE creator_id = ?`, creatorID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out[s] = true
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetState(ctx context.Context, id int64, state State) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE videos SET state = ?, state_changed_at = ? WHERE id = ?`,
+		string(state), time.Now().Unix(), id,
+	)
+	return err
+}
+
+// --- watch state ---
+
+func (s *Store) GetWatch(ctx context.Context, videoID int64) (*WatchState, error) {
+	var w WatchState
+	var updated int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT video_id, last_position_seconds, watched, watched_at, updated_at FROM watch_state WHERE video_id = ?`,
+		videoID,
+	).Scan(&w.VideoID, &w.LastPositionSeconds, &w.Watched, &w.WatchedAt, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &WatchState{VideoID: videoID}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	w.UpdatedAt = time.Unix(updated, 0)
+	return &w, nil
+}
+
+func (s *Store) UpsertPosition(ctx context.Context, videoID int64, position float64, watched bool) error {
+	now := time.Now().Unix()
+	var watchedAt sql.NullInt64
+	if watched {
+		watchedAt = sql.NullInt64{Int64: now, Valid: true}
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO watch_state(video_id, last_position_seconds, watched, watched_at, updated_at)
+			VALUES(?, ?, ?, ?, ?)
+		ON CONFLICT(video_id) DO UPDATE SET
+			last_position_seconds = excluded.last_position_seconds,
+			watched = watch_state.watched OR excluded.watched,
+			watched_at = COALESCE(watch_state.watched_at, excluded.watched_at),
+			updated_at = excluded.updated_at
+	`, videoID, position, boolToInt(watched), watchedAt, now)
+	return err
+}
+
+// LatestWatchedID returns the id of the most recently watched video for a
+// creator, or 0 if none yet.
+func (s *Store) LatestWatchedID(ctx context.Context, creatorID int64) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT v.id
+		FROM videos v
+		JOIN watch_state w ON w.video_id = v.id
+		WHERE v.creator_id = ? AND w.watched_at IS NOT NULL
+		ORDER BY w.watched_at DESC
+		LIMIT 1
+	`, creatorID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
+// --- internals ---
+
+const selectCols = `SELECT id, creator_id, external_id, url, title, description,
+	duration_seconds, posted_at, downloaded_at, file_path, thumbnail_path,
+	state, state_changed_at FROM videos`
+
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func scanVideo(s scanner) (*Video, error) {
+	var v Video
+	var downloaded, stateChanged int64
+	var state string
+	if err := s.Scan(
+		&v.ID, &v.CreatorID, &v.ExternalID, &v.URL, &v.Title, &v.Description,
+		&v.DurationSeconds, &v.PostedAt, &downloaded, &v.FilePath, &v.ThumbnailPath,
+		&state, &stateChanged,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	v.DownloadedAt = time.Unix(downloaded, 0)
+	v.StateChangedAt = time.Unix(stateChanged, 0)
+	v.State = State(state)
+	return &v, nil
+}
+
+func isUnique(err error) bool {
+	return err != nil && (contains(err.Error(), "UNIQUE") || contains(err.Error(), "constraint"))
+}
+
+func contains(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+var (
+	ErrDuplicate = errors.New("video already exists")
+	ErrNotFound  = errors.New("video not found")
+)

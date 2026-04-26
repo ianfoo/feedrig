@@ -1,0 +1,129 @@
+// Player wiring: speed controls, keyboard nav, position persistence.
+(() => {
+    const shell = document.querySelector('.player-shell');
+    if (!shell) return;
+    const video = document.getElementById('player');
+    if (!video) return;
+
+    const videoID = shell.dataset.videoId;
+    const resume = parseFloat(shell.dataset.resume || '0');
+    const prevURL = shell.dataset.prevUrl || '';
+    const nextURL = shell.dataset.nextUrl || '';
+
+    // Resume from last position if more than a couple seconds in.
+    video.addEventListener('loadedmetadata', () => {
+        if (resume > 2 && resume < video.duration - 2) {
+            video.currentTime = resume;
+        }
+        markActiveSpeed(video.playbackRate);
+    });
+
+    // Speed buttons.
+    const speedBtns = document.querySelectorAll('.speed-btn');
+    speedBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const s = parseFloat(btn.dataset.speed);
+            video.playbackRate = s;
+            markActiveSpeed(s);
+        });
+    });
+    function markActiveSpeed(speed) {
+        speedBtns.forEach(b => {
+            b.classList.toggle('active', Math.abs(parseFloat(b.dataset.speed) - speed) < 0.001);
+        });
+    }
+
+    // Position persistence: throttle to once per 4s + on pause/end.
+    let lastSent = 0;
+    function persist(watched = false) {
+        const body = new URLSearchParams({ position: video.currentTime.toFixed(2), watched: watched ? '1' : '0' });
+        navigator.sendBeacon
+            ? navigator.sendBeacon(`/videos/${videoID}/position`, body)
+            : fetch(`/videos/${videoID}/position`, { method: 'POST', body, keepalive: true });
+    }
+    video.addEventListener('timeupdate', () => {
+        const now = Date.now();
+        if (now - lastSent > 4000) {
+            lastSent = now;
+            persist(false);
+        }
+    });
+    video.addEventListener('pause', () => persist(false));
+    video.addEventListener('ended', () => {
+        persist(true);
+        if (nextURL) window.location.href = nextURL;
+    });
+    window.addEventListener('beforeunload', () => persist(video.duration > 0 && video.currentTime / video.duration > 0.9));
+
+    // Keyboard.
+    const speedSequence = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5];
+    document.addEventListener('keydown', (e) => {
+        // Ignore when typing in form fields.
+        if (e.target.matches('input, textarea, select')) return;
+
+        switch (e.key) {
+            case ' ':
+                e.preventDefault();
+                video.paused ? video.play() : video.pause();
+                break;
+            case 'ArrowLeft':
+                if (e.shiftKey || e.altKey) {
+                    e.preventDefault();
+                    if (prevURL) window.location.href = prevURL;
+                } else if (!e.metaKey && !e.ctrlKey) {
+                    // Default browser arrow seeks 5s in <video>; let it.
+                    if (prevURL && e.repeat === false && video.currentTime < 0.5) {
+                        // If at very start, jump to prev video.
+                        e.preventDefault();
+                        window.location.href = prevURL;
+                    }
+                }
+                break;
+            case 'ArrowRight':
+                if (e.shiftKey || e.altKey) {
+                    e.preventDefault();
+                    if (nextURL) window.location.href = nextURL;
+                }
+                break;
+            case 'j':
+            case 'J':
+                e.preventDefault();
+                video.currentTime = Math.max(0, video.currentTime - 5);
+                break;
+            case 'l':
+            case 'L':
+                e.preventDefault();
+                video.currentTime = Math.min(video.duration, video.currentTime + 5);
+                break;
+            case 'k':
+            case 'K':
+                e.preventDefault();
+                video.paused ? video.play() : video.pause();
+                break;
+            default:
+                if (e.key >= '1' && e.key <= '7') {
+                    const idx = parseInt(e.key, 10) - 1;
+                    if (idx < speedSequence.length) {
+                        video.playbackRate = speedSequence[idx];
+                        markActiveSpeed(speedSequence[idx]);
+                    }
+                }
+        }
+    });
+
+    // Wheel-based scroll-through-videos (deliberately conservative: requires
+    // big delta + cooldown so it doesn't fire on incidental trackpad noise).
+    let wheelCooldown = 0;
+    shell.addEventListener('wheel', (e) => {
+        const now = Date.now();
+        if (now - wheelCooldown < 600) return;
+        if (Math.abs(e.deltaY) < 80) return;
+        if (e.deltaY > 0 && nextURL) {
+            wheelCooldown = now;
+            window.location.href = nextURL;
+        } else if (e.deltaY < 0 && prevURL) {
+            wheelCooldown = now;
+            window.location.href = prevURL;
+        }
+    }, { passive: true });
+})();

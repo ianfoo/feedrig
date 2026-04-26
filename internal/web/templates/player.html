@@ -1,0 +1,37 @@
+{{template "head" (dict "Title" (or .Video.Title.String "video") "Crumb" (printf "@%s" .Creator.Handle) "Script" "/static/player.js")}}
+
+<section class="player-shell"
+        data-video-id="{{.Video.ID}}"
+        data-resume="{{.Watch.LastPositionSeconds}}"
+        {{if .Prev}}data-prev-url="/videos/{{.Prev.ID}}"{{end}}
+        {{if .Next}}data-next-url="/videos/{{.Next.ID}}"{{end}}>
+    <video id="player" src="{{.MediaURL}}" {{with .ThumbURL}}poster="{{.}}"{{end}} controls preload="metadata"></video>
+
+    <div class="player-controls">
+        <div class="speed-row">
+            <span class="label">Speed</span>
+            {{range $s := slice 0.75 1.0 1.25 1.5 1.75 2.0 2.5}}
+            <button type="button" class="speed-btn" data-speed="{{$s}}">{{printf "%g×" $s}}</button>
+            {{end}}
+        </div>
+        <div class="action-row">
+            {{if .Prev}}<a class="nav-btn" href="/videos/{{.Prev.ID}}" title="Newer (←)">← Newer</a>{{else}}<span class="nav-btn disabled">← Newer</span>{{end}}
+            <form method="post" action="/videos/{{.Video.ID}}/save"><button type="submit" class="primary">Save</button></form>
+            <form method="post" action="/videos/{{.Video.ID}}/delete" onsubmit="return confirm('Delete this video?')"><button type="submit" class="danger">Delete</button></form>
+            {{if .Next}}<a class="nav-btn" href="/videos/{{.Next.ID}}" title="Older (→)">Older →</a>{{else}}<span class="nav-btn disabled">Older →</span>{{end}}
+        </div>
+    </div>
+
+    <section class="meta-panel">
+        <h2>{{or .Video.Title.String "(untitled)"}}</h2>
+        <p class="meta">
+            <a href="{{.Video.URL}}" target="_blank" rel="noopener">on instagram</a>
+            · {{if .Video.PostedAt.Valid}}posted {{humanTime .Video.PostedAt.Int64}}{{else}}downloaded {{humanTime .Video.DownloadedAt}}{{end}}
+            {{with duration .Video.DurationSeconds.Int64}} · {{.}}{{end}}
+        </p>
+        {{with .Video.Description.String}}<p class="description">{{.}}</p>{{end}}
+        <p class="hint">Keyboard: <kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> prev/next video · <kbd>J</kbd>/<kbd>L</kbd> seek 5s · <kbd>1</kbd>–<kbd>7</kbd> speed</p>
+    </section>
+</section>
+
+{{template "foot" .}}

@@ -1,0 +1,26 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Title}} · feedrig</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <header class="topbar">
+        <a href="/creators" class="brand">feedrig</a>
+        {{with .Crumb}}<span class="crumb">{{.}}</span>{{end}}
+    </header>
+    <main>
+{{end}}
+
+{{define "foot"}}
+    </main>
+{{with .Script}}<script src="{{.}}" defer></script>{{end}}
+</body>
+</html>{{end}}
+
+{{define "flash"}}
+{{with .Flash}}<div class="flash flash-ok">{{.}}</div>{{end}}
+{{with .Error}}<div class="flash flash-err">{{.}}</div>{{end}}
+{{end}}

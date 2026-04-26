@@ -1,0 +1,58 @@
+{{template "head" (dict "Title" (printf "@%s" .Creator.Handle) "Crumb" (printf "@%s" .Creator.Handle))}}
+{{template "flash" .}}
+
+<section class="panel">
+    <div class="row-between">
+        <div>
+            <h1>@{{.Creator.Handle}}</h1>
+            {{with .Creator.DisplayName.String}}<p class="dn">{{.}}</p>{{end}}
+            <p class="meta">
+                {{if .Creator.LastFetchedAt.Valid}}Last fetched {{humanTime .Creator.LastFetchedAt.Int64}}{{else}}Never fetched{{end}}
+            </p>
+        </div>
+        <form method="post" action="/creators/{{.Creator.ID}}/fetch">
+            <button type="submit" class="primary">Fetch new</button>
+        </form>
+    </div>
+</section>
+
+<section class="panel">
+    <details>
+        <summary>Add by URL</summary>
+        <form method="post" action="/creators/{{.Creator.ID}}/add-url" class="inline-form">
+            <input name="url" placeholder="https://www.instagram.com/p/SHORTCODE/" required>
+            <button type="submit">Fetch this post</button>
+        </form>
+    </details>
+</section>
+
+<section class="panel">
+    {{if .Rows}}
+    <ul class="video-grid">
+        {{range .Rows}}
+        <li class="video-card {{if .IsLastWatch}}last-watched{{end}} state-{{.Video.State}}">
+            <a href="/videos/{{.Video.ID}}">
+                {{if .Video.ThumbnailPath.Valid}}
+                <div class="thumb"><img src="{{thumbURL .Video}}" alt=""></div>
+                {{else}}
+                <div class="thumb thumb-empty"></div>
+                {{end}}
+                <div class="card-body">
+                    <div class="card-title">{{or .Video.Title.String "(untitled)"}}</div>
+                    <div class="card-meta">
+                        {{if .Video.PostedAt.Valid}}{{humanTime .Video.PostedAt.Int64}}{{else}}{{humanTime .Video.DownloadedAt}}{{end}}
+                        {{with duration .Video.DurationSeconds.Int64}} · {{.}}{{end}}
+                    </div>
+                    {{if .IsLastWatch}}<div class="badge">last watched</div>{{end}}
+                    {{if eq (printf "%s" .Video.State) "saved"}}<div class="badge badge-saved">saved</div>{{end}}
+                </div>
+            </a>
+        </li>
+        {{end}}
+    </ul>
+    {{else}}
+    <p class="empty">No videos yet. Click "Fetch new" or paste a post URL above.</p>
+    {{end}}
+</section>
+
+{{template "foot" .}}

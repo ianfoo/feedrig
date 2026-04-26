@@ -1,0 +1,33 @@
+{{template "head" (dict "Title" "Creators")}}
+{{template "flash" .}}
+
+<section class="panel">
+    <h1>Creators</h1>
+    <form method="post" action="/creators" class="inline-form">
+        <input name="handle" placeholder="instagram handle or URL" required autofocus>
+        <input name="display_name" placeholder="display name (optional)">
+        <button type="submit">Add</button>
+    </form>
+</section>
+
+<section class="panel">
+    {{if .Creators}}
+    <ul class="creator-list">
+        {{range .Creators}}
+        <li>
+            <a href="/creators/{{.ID}}" class="row">
+                <span class="handle">@{{.Handle}}</span>
+                {{with .DisplayName.String}}<span class="dn">{{.}}</span>{{end}}
+                <span class="meta">
+                    {{if .LastFetchedAt.Valid}}last fetched {{humanTime .LastFetchedAt.Int64}}{{else}}never fetched{{end}}
+                </span>
+            </a>
+        </li>
+        {{end}}
+    </ul>
+    {{else}}
+    <p class="empty">No creators yet. Add one above to get started.</p>
+    {{end}}
+</section>
+
+{{template "foot" .}}
