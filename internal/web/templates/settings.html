@@ -1,0 +1,33 @@
+{{template "head" (dict "Title" "Settings" "Crumb" "Settings")}}
+{{template "flash" .}}
+
+<section class="panel">
+    <h1>Settings</h1>
+    <form method="post" action="/settings" class="settings-form">
+        <fieldset>
+            <legend>Polling cadence</legend>
+            <label>
+                <span>Default poll interval (hours)</span>
+                <input type="number" name="poll_hours" min="1" max="168" value="{{.PollHours}}">
+            </label>
+            <p class="hint">How often each creator's profile is checked for new posts. Per-creator overrides are configurable on the creator detail page (planned).</p>
+        </fieldset>
+
+        <fieldset>
+            <legend>Self-curating library</legend>
+            <label>
+                <span>Auto-expire after (days)</span>
+                <input type="number" name="ttl_days" min="1" max="365" value="{{.TTLDays}}">
+            </label>
+            <label>
+                <span>Grace window before permanent removal (days)</span>
+                <input type="number" name="grace_days" min="1" max="60" value="{{.GraceDays}}">
+            </label>
+            <p class="hint">Videos move to <a href="/pending">pending deletion</a> after the auto-expire window. From there you have the grace window to save or restore them before they're permanently removed.</p>
+        </fieldset>
+
+        <button type="submit" class="primary">Save</button>
+    </form>
+</section>
+
+{{template "foot" .}}

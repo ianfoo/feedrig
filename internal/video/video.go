@@ -146,6 +146,28 @@ func (s *Store) SetState(ctx context.Context, id int64, state State) error {
 	return err
 }
 
+// ListByState returns all videos in the given state, newest first by
+// state_changed_at — useful for the pending-deletion review page.
+func (s *Store) ListByState(ctx context.Context, state State) ([]Video, error) {
+	rows, err := s.db.QueryContext(ctx,
+		selectCols+` WHERE state = ? ORDER BY state_changed_at DESC, id DESC`,
+		string(state),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Video
+	for rows.Next() {
+		v, err := scanVideo(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *v)
+	}
+	return out, rows.Err()
+}
+
 // --- watch state ---
 
 func (s *Store) GetWatch(ctx context.Context, videoID int64) (*WatchState, error) {

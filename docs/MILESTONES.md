@@ -113,16 +113,31 @@ Spec source: the user's initial requirements, distilled in [`docs/ARCHITECTURE.m
 
 ## v0.3 — Scheduler + TTL
 
-**Status:** ⏳ planned.
+**Status:** ✅ shipped.
 
 **Features:**
 
-- [ ] In-process scheduler: per-creator polling cadence (default 6h, per-creator override via UI). Goroutine + ticker per creator, jittered.
-- [ ] TTL sweeper: nightly job. `active` videos older than `ttl_days` (default 30) → `pending_deletion`. `pending_deletion` rows older than `grace_days` (default 7) → file removed, row marked `deleted` (or hard-deleted; TBD).
-- [ ] Pending-deletion review page lists items about to expire with quick "Save" / "Delete now" actions.
-- [ ] Configurable globals (TTL, grace, default cadence) live in a `settings` KV table.
+- [x] `internal/schedule/Scheduler`: launches one goroutine per creator on startup, jittered first-run (0–60% of interval, capped at 5 min) to avoid thundering herd, ±10% jitter on subsequent cycles. Calls `ingest.Service.FetchNewForCreator` per tick.
+- [x] Schema migration 2: `creators.poll_interval_seconds` (per-creator override; `NULL` = use default).
+- [x] `internal/ttl/Sweeper`: runs every `ttl_sweep_interval_seconds` (default 1h). Pass 1 ages `active` videos older than `ttl_days` (default 30) → `pending_deletion`. Pass 2 finds `pending_deletion` rows whose `state_changed_at` is older than `grace_days` (default 7), removes media + thumbnail files from disk, and hard-deletes the row.
+- [x] `internal/settings`: typed wrapper over the `settings` KV table; keys for poll interval, TTL days, grace days, sweep interval; sensible fallback defaults.
+- [x] `/pending` page: lists videos in pending-deletion state with `Keep` (→ saved) / `Restore` (→ active) actions.
+- [x] `/settings` page: edit poll cadence, TTL days, grace days.
+- [x] Topbar nav entries: `Pending`, `Settings`.
 
-**Deviations:** TBD.
+**Deviations from original v0.3 plan:**
+
+- **Hard-delete on grace expiry (chose this) vs. soft `state='deleted'`.** Picked hard-delete because retaining metadata after the file is gone clutters lists and the user has already had the grace window. If we ever need an audit trail, that's a separate decision.
+- **Scheduler reload on creator add / delete is NOT live.** A server restart picks up newly-added creators. Hot-reload (subscribing to creator add/delete events) is queued for v0.3.x. In practice this is fine for a single-user tool.
+- **Per-creator UI to override poll cadence** is not built. The DB column is in place; the form is queued for v0.3.x.
+
+**Smoke test (with ttl_days=1, grace_days=1):**
+
+- Active video downloaded 5 days ago → sweeper aged it: `aged=1` (state → pending_deletion). ✅
+- Pending-deletion row whose state changed 3 days ago → sweeper removed media + hard-deleted row: `removed=1, pruned=1`. ✅
+- `/pending` renders the aged row with Keep/Restore actions. ✅
+- `/settings` renders configured values and accepts updates. ✅
+- Schema migration applied cleanly: `PRAGMA user_version = 2`. ✅
 
 ---
 

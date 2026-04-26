@@ -18,6 +18,7 @@ import (
 	"github.com/ianfoo/feedrig/internal/creator"
 	"github.com/ianfoo/feedrig/internal/enrich"
 	"github.com/ianfoo/feedrig/internal/ingest"
+	"github.com/ianfoo/feedrig/internal/settings"
 	"github.com/ianfoo/feedrig/internal/video"
 )
 
@@ -28,17 +29,18 @@ type Server struct {
 	creators  *creator.Store
 	videos    *video.Store
 	enrich    *enrich.Store
+	settings  *settings.Store
 	ingest    *ingest.Service
 	mediaRoot string
 	tpl       *template.Template
 	log       *slog.Logger
 }
 
-func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, ing *ingest.Service, mediaRoot string, log *slog.Logger) (*Server, error) {
+func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, st *settings.Store, ing *ingest.Service, mediaRoot string, log *slog.Logger) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	srv := &Server{creators: creators, videos: videos, enrich: en, ingest: ing, mediaRoot: mediaRoot, log: log}
+	srv := &Server{creators: creators, videos: videos, enrich: en, settings: st, ingest: ing, mediaRoot: mediaRoot, log: log}
 	tpl, err := template.New("").Funcs(funcMap).Funcs(template.FuncMap{
 		"thumbURL": func(v video.Video) string {
 			if !v.ThumbnailPath.Valid {
@@ -77,6 +79,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /videos/{id}/position", s.savePosition)
 	mux.HandleFunc("POST /videos/{id}/save", s.saveVideo)
 	mux.HandleFunc("POST /videos/{id}/delete", s.deleteVideo)
+	mux.HandleFunc("POST /videos/{id}/restore", s.restoreVideo)
+
+	mux.HandleFunc("GET /pending", s.pendingList)
+	mux.HandleFunc("GET /settings", s.settingsPage)
+	mux.HandleFunc("POST /settings", s.saveSettings)
 
 	return mux
 }
@@ -385,18 +392,88 @@ func (s *Server) deleteVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	creatorID := v.CreatorID
-	// Best-effort file cleanup; tolerate missing files.
-	if v.FilePath != "" {
-		_ = removeIfPresent(v.FilePath)
-	}
-	if v.ThumbnailPath.Valid {
-		_ = removeIfPresent(v.ThumbnailPath.String)
-	}
+	// Move to pending_deletion. Don't remove the file yet — the TTL sweeper
+	// finalizes after the grace window. This gives the user a chance to
+	// restore from /pending.
 	if err := s.videos.SetState(r.Context(), id, video.StatePendingDeletion); err != nil {
 		s.serverError(w, err)
 		return
 	}
-	http.Redirect(w, r, fmt.Sprintf("/creators/%d?flash=Deleted", creatorID), http.StatusFound)
+	http.Redirect(w, r, fmt.Sprintf("/creators/%d?flash=Moved+to+pending+deletion", creatorID), http.StatusFound)
+}
+
+func (s *Server) restoreVideo(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.videos.SetState(r.Context(), id, video.StateActive); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/pending?flash=Restored", http.StatusFound)
+}
+
+func (s *Server) pendingList(w http.ResponseWriter, r *http.Request) {
+	vids, err := s.videos.ListByState(r.Context(), video.StatePendingDeletion)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	ttlDays, graceDays := s.settings.TTL(r.Context())
+	type row struct {
+		Video   video.Video
+		Creator string
+	}
+	rows := make([]row, len(vids))
+	for i, v := range vids {
+		c, err := s.creators.Get(r.Context(), v.CreatorID)
+		var handle string
+		if err == nil {
+			handle = c.Handle
+		}
+		rows[i] = row{Video: v, Creator: handle}
+	}
+	s.render(w, "pending.html", map[string]any{
+		"Rows":          rows,
+		"TTLDays":       int(ttlDays.Hours() / 24),
+		"GraceDays":     int(graceDays.Hours() / 24),
+		"Flash":         r.URL.Query().Get("flash"),
+		"Error":         r.URL.Query().Get("err"),
+	})
+}
+
+func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
+	pollInt := s.settings.PollInterval(r.Context())
+	ttl, grace := s.settings.TTL(r.Context())
+	s.render(w, "settings.html", map[string]any{
+		"PollHours": int(pollInt.Hours()),
+		"TTLDays":   int(ttl.Hours() / 24),
+		"GraceDays": int(grace.Hours() / 24),
+		"Flash":     r.URL.Query().Get("flash"),
+		"Error":     r.URL.Query().Get("err"),
+	})
+}
+
+func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		s.userError(w, "invalid form")
+		return
+	}
+	pollHours, _ := strconv.Atoi(r.FormValue("poll_hours"))
+	ttlDays, _ := strconv.Atoi(r.FormValue("ttl_days"))
+	graceDays, _ := strconv.Atoi(r.FormValue("grace_days"))
+
+	if pollHours > 0 {
+		_ = s.settings.Set(r.Context(), settings.KeyDefaultPollInterval, strconv.Itoa(pollHours*3600))
+	}
+	if ttlDays > 0 {
+		_ = s.settings.Set(r.Context(), settings.KeyTTLDays, strconv.Itoa(ttlDays))
+	}
+	if graceDays > 0 {
+		_ = s.settings.Set(r.Context(), settings.KeyGraceDays, strconv.Itoa(graceDays))
+	}
+	http.Redirect(w, r, "/settings?flash=Saved+(scheduler+changes+take+effect+on+next+restart)", http.StatusFound)
 }
 
 // --- helpers ---

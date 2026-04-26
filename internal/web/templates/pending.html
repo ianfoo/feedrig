@@ -1,0 +1,44 @@
+{{template "head" (dict "Title" "Pending deletion" "Crumb" "Pending")}}
+{{template "flash" .}}
+
+<section class="panel">
+    <div class="row-between">
+        <div>
+            <h1>Pending deletion</h1>
+            <p class="meta">Videos auto-expire {{.TTLDays}} days after download. Once moved here, they're permanently removed after {{.GraceDays}} more days unless you save or restore.</p>
+        </div>
+        <a href="/settings" class="nav-btn">Settings</a>
+    </div>
+</section>
+
+<section class="panel">
+    {{if .Rows}}
+    <ul class="video-grid">
+        {{range .Rows}}
+        <li class="video-card state-pending_deletion">
+            <a href="/videos/{{.Video.ID}}">
+                {{if .Video.ThumbnailPath.Valid}}
+                <div class="thumb"><img src="{{thumbURL .Video}}" alt=""></div>
+                {{else}}
+                <div class="thumb thumb-empty"></div>
+                {{end}}
+                <div class="card-body">
+                    <div class="card-title">{{or .Video.Title.String "(untitled)"}}</div>
+                    <div class="card-meta">
+                        @{{.Creator}} · moved {{humanTime .Video.StateChangedAt}}
+                    </div>
+                </div>
+            </a>
+            <div class="card-actions">
+                <form method="post" action="/videos/{{.Video.ID}}/save"><button type="submit" class="primary tiny">Keep</button></form>
+                <form method="post" action="/videos/{{.Video.ID}}/restore"><button type="submit" class="tiny">Restore</button></form>
+            </div>
+        </li>
+        {{end}}
+    </ul>
+    {{else}}
+    <p class="empty">Nothing pending. The TTL sweeper will move things here as they age out.</p>
+    {{end}}
+</section>
+
+{{template "foot" .}}

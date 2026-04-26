@@ -14,6 +14,8 @@ var migrations = []string{
 	// IF NOT EXISTS isn't supported by ADD COLUMN, hence the user_version gate.
 	`ALTER TABLE videos ADD COLUMN enrichment_state TEXT NOT NULL DEFAULT 'pending';
 	 ALTER TABLE videos ADD COLUMN enrichment_error TEXT;`,
+	// 2: per-creator poll interval override (NULL = use global default).
+	`ALTER TABLE creators ADD COLUMN poll_interval_seconds INTEGER;`,
 }
 
 func applyMigrations(conn *sql.DB) error {

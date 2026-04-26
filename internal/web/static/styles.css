@@ -32,6 +32,21 @@ a:hover { text-decoration: underline; }
     border-bottom: 1px solid var(--border);
     background: var(--panel);
 }
+.nav-right { margin-left: auto; display: flex; gap: 0.8rem; }
+.nav-right a { color: var(--fg-dim); }
+.nav-right a:hover { color: var(--fg); text-decoration: none; }
+.card-actions { display: flex; gap: 0.4rem; padding: 0.4rem 0.7rem 0.7rem; }
+.tiny { font-size: 0.78rem; padding: 0.25rem 0.5rem; }
+.settings-form fieldset {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin: 0.75rem 0;
+}
+.settings-form legend { padding: 0 0.4rem; color: var(--fg-dim); font-size: 0.85rem; }
+.settings-form label { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.6rem; }
+.settings-form label span { color: var(--fg-dim); font-size: 0.9rem; }
+.settings-form input[type=number] { max-width: 200px; }
 .brand {
     font-weight: 700;
     font-size: 1.1rem;

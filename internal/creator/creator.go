@@ -11,12 +11,13 @@ import (
 )
 
 type Creator struct {
-	ID            int64
-	Handle        string
-	DisplayName   sql.NullString
-	ProfileURL    string
-	AddedAt       time.Time
-	LastFetchedAt sql.NullInt64
+	ID                  int64
+	Handle              string
+	DisplayName         sql.NullString
+	ProfileURL          string
+	AddedAt             time.Time
+	LastFetchedAt       sql.NullInt64
+	PollIntervalSeconds sql.NullInt64
 }
 
 func (c Creator) LastFetched() (time.Time, bool) {
@@ -80,7 +81,7 @@ func (s *Store) List(ctx context.Context, order SortOrder) ([]Creator, error) {
 		orderBy = "last_fetched_at IS NULL, last_fetched_at DESC"
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, handle, display_name, profile_url, added_at, last_fetched_at FROM creators ORDER BY `+orderBy,
+		`SELECT id, handle, display_name, profile_url, added_at, last_fetched_at, poll_interval_seconds FROM creators ORDER BY `+orderBy,
 	)
 	if err != nil {
 		return nil, err
@@ -90,7 +91,7 @@ func (s *Store) List(ctx context.Context, order SortOrder) ([]Creator, error) {
 	for rows.Next() {
 		var c Creator
 		var added int64
-		if err := rows.Scan(&c.ID, &c.Handle, &c.DisplayName, &c.ProfileURL, &added, &c.LastFetchedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Handle, &c.DisplayName, &c.ProfileURL, &added, &c.LastFetchedAt, &c.PollIntervalSeconds); err != nil {
 			return nil, err
 		}
 		c.AddedAt = time.Unix(added, 0)
@@ -103,9 +104,9 @@ func (s *Store) Get(ctx context.Context, id int64) (*Creator, error) {
 	var c Creator
 	var added int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, handle, display_name, profile_url, added_at, last_fetched_at FROM creators WHERE id = ?`,
+		`SELECT id, handle, display_name, profile_url, added_at, last_fetched_at, poll_interval_seconds FROM creators WHERE id = ?`,
 		id,
-	).Scan(&c.ID, &c.Handle, &c.DisplayName, &c.ProfileURL, &added, &c.LastFetchedAt)
+	).Scan(&c.ID, &c.Handle, &c.DisplayName, &c.ProfileURL, &added, &c.LastFetchedAt, &c.PollIntervalSeconds)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

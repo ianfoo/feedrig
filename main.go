@@ -16,8 +16,11 @@ import (
 	"github.com/ianfoo/feedrig/internal/db"
 	"github.com/ianfoo/feedrig/internal/enrich"
 	"github.com/ianfoo/feedrig/internal/ingest"
+	"github.com/ianfoo/feedrig/internal/schedule"
+	"github.com/ianfoo/feedrig/internal/settings"
 	"github.com/ianfoo/feedrig/internal/summarize"
 	"github.com/ianfoo/feedrig/internal/transcribe"
+	"github.com/ianfoo/feedrig/internal/ttl"
 	"github.com/ianfoo/feedrig/internal/video"
 	"github.com/ianfoo/feedrig/internal/web"
 )
@@ -75,7 +78,9 @@ func main() {
 	}
 	ingestSvc.SetEnricher(worker)
 
-	srv, err := web.NewServer(creators, videos, enrichStore, ingestSvc, mediaAbs, log)
+	settingsStore := settings.NewStore(conn)
+
+	srv, err := web.NewServer(creators, videos, enrichStore, settingsStore, ingestSvc, mediaAbs, log)
 	if err != nil {
 		log.Error("server init", "err", err); os.Exit(1)
 	}
@@ -90,6 +95,22 @@ func main() {
 	defer stop()
 
 	go worker.Run(ctx)
+
+	scheduler := &schedule.Scheduler{
+		Creators: creators,
+		Settings: settingsStore,
+		Ingest:   ingestSvc,
+		Log:      log,
+	}
+	go scheduler.Run(ctx)
+
+	sweeper := &ttl.Sweeper{
+		DB:       conn,
+		Videos:   videos,
+		Settings: settingsStore,
+		Log:      log,
+	}
+	go sweeper.Run(ctx)
 
 	go func() {
 		log.Info("listening", "addr", *addr, "data", *dataDir, "media", mediaAbs)
