@@ -145,6 +145,29 @@ Lightweight ADRs. Each entry: what, why, alternatives considered, status.
 
 ---
 
+## ADR-014: One artifact, multiple deployment targets — not Lambda-decomposed
+
+**Decision:** feedrig is a single Go binary that runs the HTTP server, scheduler, TTL sweeper, and enrichment worker as goroutines in one process. The same binary is the unit of deployment for: local dev, DigitalOcean droplet, Fargate task, Cloud Run service, Container Apps revision.
+
+It is **not** decomposed into discrete Lambda functions. Background tasks are exposed as **opt-in CLI subcommands** (`feedrig sweep`, `feedrig poll <handle>`, `feedrig enrich <id>`) so a future user with a different cost shape can run them from cron / EventBridge without rewriting the system.
+
+**Rationale (per user observation during v0.6):**
+
+- The single-process architecture costs essentially nothing on a small VPS or container host. Lambda's per-invocation overhead exceeds the cost of a $4/mo droplet for a personal-use tool.
+- Lambda is awkward for the heavy paths anyway: Chromium for chromedp is ~250 MB, yt-dlp can need >15 min for big videos, and the HTTP layer wants <100 ms response (cold-start tax is real).
+- The system is already mostly DB-driven. The enrich queue is the only in-memory state, and it has a 30s rescan from DB, so the per-task subcommands are cheap to add.
+- Decomposing now would force two architectures to coexist. Adding subcommands now keeps the door open without paying for it.
+
+**Trade-offs:**
+
+- The "everything in one binary" mode means a process restart blips the scheduler. Hot-reload (v0.6) covers config changes; restarts are still required for new code.
+- A Dockerfile (v0.7) makes Fargate/Cloud Run/Container Apps trivial; we don't need Kubernetes.
+- If costs ever justify Lambda decomposition (millions of polls/day), the subcommand surface is the migration path: each subcommand becomes a Lambda handler, the long-running mode is retired, the HTTP layer gets API Gateway. Not a rewrite, just a re-deploy.
+
+**Status:** Accepted. v0.7 ships the subcommands + Dockerfile.
+
+---
+
 ## ADR-013: History retention via `archived` state, not hard delete
 
 **Decision:** When the TTL grace window expires for a `pending_deletion` video, the sweeper transitions state to `archived`, removes the media file from disk, and **keeps everything else** — title, description, summary, transcript, tag assignments, and thumbnail. The row is never hard-deleted by the sweeper.

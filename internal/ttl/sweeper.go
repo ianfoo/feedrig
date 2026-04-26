@@ -47,6 +47,7 @@ func (s *Sweeper) Run(ctx context.Context) {
 type SweepResult struct {
 	Aged     int // active → pending_deletion
 	Archived int // pending_deletion → archived: media file removed, metadata kept for history
+	Purged   int // archived rows hard-deleted past their metadata TTL
 }
 
 func (s *Sweeper) sweep(ctx context.Context) {
@@ -55,8 +56,8 @@ func (s *Sweeper) sweep(ctx context.Context) {
 		s.log().Warn("ttl sweep failed", "err", err)
 		return
 	}
-	if res.Aged > 0 || res.Archived > 0 {
-		s.log().Info("ttl sweep", "aged", res.Aged, "archived", res.Archived)
+	if res.Aged > 0 || res.Archived > 0 || res.Purged > 0 {
+		s.log().Info("ttl sweep", "aged", res.Aged, "archived", res.Archived, "purged", res.Purged)
 	}
 }
 
@@ -124,6 +125,48 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (SweepResult, error) {
 			continue
 		}
 		res.Archived++
+	}
+
+	// 3) metadata TTL: hard-purge archived rows whose state_changed_at is
+	// older than the configured `metadata_ttl_days`. 0 means "unlimited" —
+	// retain forever. Thumbnails on disk are removed alongside the row.
+	metaTTL := s.Settings.MetadataTTL(ctx)
+	if metaTTL > 0 {
+		metaCutoff := now.Add(-metaTTL).Unix()
+		thumbRows, err := s.DB.QueryContext(ctx, `
+			SELECT id, COALESCE(thumbnail_path, '') FROM videos
+			WHERE state = 'archived' AND state_changed_at < ?
+		`, metaCutoff)
+		if err != nil {
+			return res, err
+		}
+		type doomedMeta struct {
+			id    int64
+			thumb string
+		}
+		var metaBatch []doomedMeta
+		for thumbRows.Next() {
+			var dm doomedMeta
+			if err := thumbRows.Scan(&dm.id, &dm.thumb); err != nil {
+				thumbRows.Close()
+				return res, err
+			}
+			metaBatch = append(metaBatch, dm)
+		}
+		thumbRows.Close()
+
+		for _, dm := range metaBatch {
+			if dm.thumb != "" {
+				_ = os.Remove(dm.thumb) // best-effort
+			}
+			// Cascade deletes on transcripts, summaries, video_tags,
+			// watch_state via ON DELETE CASCADE in the schema.
+			if _, err := s.DB.ExecContext(ctx, `DELETE FROM videos WHERE id = ?`, dm.id); err != nil {
+				s.log().Warn("ttl: purge archived row", "id", dm.id, "err", err)
+				continue
+			}
+			res.Purged++
+		}
 	}
 
 	return res, nil

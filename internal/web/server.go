@@ -641,12 +641,18 @@ func (s *Server) pendingList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	pollInt := s.settings.PollInterval(r.Context())
 	ttl, grace := s.settings.TTL(r.Context())
+	metaTTL := s.settings.MetadataTTL(r.Context())
+	metaTTLDays := -1 // sentinel for "unlimited"
+	if metaTTL > 0 {
+		metaTTLDays = settings.DaysFromDuration(metaTTL)
+	}
 	s.render(w, "settings.html", map[string]any{
-		"PollHours": int(pollInt.Hours()),
-		"TTLDays":   settings.DaysFromDuration(ttl),
-		"GraceDays": settings.DaysFromDuration(grace),
-		"Flash":     r.URL.Query().Get("flash"),
-		"Error":     r.URL.Query().Get("err"),
+		"PollHours":       int(pollInt.Hours()),
+		"TTLDays":         settings.DaysFromDuration(ttl),
+		"GraceDays":       settings.DaysFromDuration(grace),
+		"MetadataTTLDays": metaTTLDays,
+		"Flash":           r.URL.Query().Get("flash"),
+		"Error":           r.URL.Query().Get("err"),
 	})
 }
 
@@ -966,6 +972,7 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	pollHours, _ := strconv.Atoi(r.FormValue("poll_hours"))
 	ttlDays, _ := strconv.Atoi(r.FormValue("ttl_days"))
 	graceDays, _ := strconv.Atoi(r.FormValue("grace_days"))
+	metaTTLRaw := strings.TrimSpace(r.FormValue("metadata_ttl_days"))
 
 	if pollHours > 0 {
 		seconds := int((time.Duration(pollHours) * time.Hour).Seconds())
@@ -977,7 +984,14 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	if graceDays > 0 {
 		_ = s.settings.Set(r.Context(), settings.KeyGraceDays, strconv.Itoa(graceDays))
 	}
-	http.Redirect(w, r, "/settings?flash=Saved+(scheduler+changes+take+effect+on+next+restart)", http.StatusFound)
+	// Metadata TTL accepts 0 explicitly (= unlimited) and skips on empty.
+	if metaTTLRaw != "" {
+		if n, err := strconv.Atoi(metaTTLRaw); err == nil && n >= 0 {
+			_ = s.settings.Set(r.Context(), settings.KeyMetadataTTLDays, strconv.Itoa(n))
+		}
+	}
+	s.reload()
+	http.Redirect(w, r, "/settings?flash=Saved", http.StatusFound)
 }
 
 // --- helpers ---

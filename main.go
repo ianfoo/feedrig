@@ -17,6 +17,7 @@ import (
 	"github.com/ianfoo/feedrig/internal/enrich"
 	"github.com/ianfoo/feedrig/internal/groups"
 	"github.com/ianfoo/feedrig/internal/ingest"
+	"github.com/ianfoo/feedrig/internal/mcp"
 	"github.com/ianfoo/feedrig/internal/schedule"
 	"github.com/ianfoo/feedrig/internal/settings"
 	"github.com/ianfoo/feedrig/internal/summarize"
@@ -27,6 +28,15 @@ import (
 )
 
 func main() {
+	// Subcommand dispatch: `feedrig mcp ...` runs the MCP stdio server
+	// instead of the HTTP server. We handle this before flag.Parse so the
+	// MCP path can have its own narrow flag set.
+	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
+		os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
+		runMCP()
+		return
+	}
+
 	addr := flag.String("addr", "127.0.0.1:7777", "listen address")
 	dataDir := flag.String("data", "data", "directory for sqlite db")
 	mediaDir := flag.String("media", "media", "directory for downloaded videos")
@@ -130,6 +140,35 @@ func main() {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutCtx)
+}
+
+// runMCP is the stdio MCP-server subcommand. Reads JSON-RPC from stdin and
+// writes responses to stdout, sharing the SQLite DB with the web server.
+// Logging goes to stderr so it doesn't pollute the protocol channel.
+func runMCP() {
+	dataDir := flag.String("data", "data", "directory holding feedrig.db")
+	flag.Parse()
+
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	conn, err := db.Open(filepath.Join(*dataDir, "feedrig.db"))
+	if err != nil {
+		log.Error("open db", "err", err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	srv := &mcp.Server{
+		Creators: creator.NewStore(conn),
+		Videos:   video.NewStore(conn),
+		Enrich:   enrich.NewStore(conn),
+		Groups:   groups.NewStore(conn),
+		Log:      log,
+	}
+	if err := srv.Serve(context.Background(), os.Stdin, os.Stdout); err != nil {
+		log.Error("mcp serve", "err", err)
+		os.Exit(1)
+	}
 }
 
 func buildSummarizer(name, ollamaURL, ollamaModel, openrouterModel string, log *slog.Logger) summarize.Summarizer {

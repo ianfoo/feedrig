@@ -15,6 +15,7 @@ const (
 	KeyDefaultPollInterval = "default_poll_interval_seconds"
 	KeyTTLDays             = "ttl_days"
 	KeyGraceDays           = "grace_days"
+	KeyMetadataTTLDays     = "metadata_ttl_days"
 	KeyTTLSweepInterval    = "ttl_sweep_interval_seconds"
 )
 
@@ -27,6 +28,7 @@ const (
 	DefaultPollInterval  = 6 * time.Hour
 	DefaultTTLDays       = 30
 	DefaultGraceDays     = 7
+	DefaultMetadataTTL   = 365 // days; 0 = unlimited
 	DefaultSweepInterval = 1 * time.Hour
 )
 
@@ -71,6 +73,22 @@ func (s *Store) TTL(ctx context.Context) (ttl, grace time.Duration) {
 	ttl = DurationFromDays(intOr(ttlV, DefaultTTLDays))
 	grace = DurationFromDays(intOr(graceV, DefaultGraceDays))
 	return
+}
+
+// MetadataTTL returns the configured age (as a Duration) past which an
+// archived video's metadata row is hard-deleted. A return value of 0 means
+// "unlimited — never purge metadata."
+func (s *Store) MetadataTTL(ctx context.Context) time.Duration {
+	v, _ := s.Get(ctx, KeyMetadataTTLDays)
+	// We allow an explicit "0" here to mean unlimited; intOr's > 0 guard
+	// would otherwise return the default. Read manually.
+	if v == "0" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		return DurationFromDays(n)
+	}
+	return DurationFromDays(DefaultMetadataTTL)
 }
 
 func (s *Store) SweepInterval(ctx context.Context) time.Duration {
