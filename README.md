@@ -1,2 +1,2 @@
-# fighter
+# feedrig
 Curate your scrolling
