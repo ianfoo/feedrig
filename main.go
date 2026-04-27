@@ -66,6 +66,8 @@ func main() {
 	ollamaModel := flag.String("ollama-model", "llama3.2:3b", "Ollama model id (must be pulled locally first: `ollama pull <name>`)")
 	openrouterModel := flag.String("openrouter-model", "anthropic/claude-3.5-haiku", "OpenRouter model id")
 	whisperModel := flag.String("whisper-model", "", "path to whisper.cpp model (.bin); empty disables transcription")
+	whisperBin := flag.String("whisper-bin", "whisper-cli", "whisper.cpp binary on PATH or absolute path (whisper-cli, or 'main' on older builds)")
+	whisperLang := flag.String("whisper-lang", "", "language hint (e.g. 'en'); empty = auto-detect")
 	categoriesFlag := flag.String("categories", "news,political-commentary,music,bass-guitar,baking,pizza,food,comedy,tech", "comma-separated category menu shown to the summarizer")
 	flag.Parse()
 
@@ -102,7 +104,7 @@ func main() {
 	worker := &enrich.Worker{
 		Videos:      videos,
 		Enrich:      enrichStore,
-		Transcriber: buildTranscriber(*whisperModel),
+		Transcriber: buildTranscriber(*whisperBin, *whisperModel, *whisperLang),
 		Summarizer:  buildSummarizer(*summarizer, *ollamaURL, *ollamaModel, *openrouterModel, log),
 		Categories:  splitCSV(*categoriesFlag),
 		Log:         log,
@@ -251,6 +253,8 @@ func runEnrich() {
 	ollamaModel := flag.String("ollama-model", "llama3.2:3b", "Ollama model id")
 	openrouterModel := flag.String("openrouter-model", "anthropic/claude-3.5-haiku", "OpenRouter model id")
 	whisperModel := flag.String("whisper-model", "", "path to whisper.cpp model")
+	whisperBin := flag.String("whisper-bin", "whisper-cli", "whisper.cpp binary (whisper-cli or 'main')")
+	whisperLang := flag.String("whisper-lang", "", "language hint (e.g. 'en'); empty = auto-detect")
 	categoriesFlag := flag.String("categories", "news,political-commentary,music,bass-guitar,baking,pizza,food,comedy,tech", "category menu for the summarizer")
 	flag.Parse()
 
@@ -274,7 +278,7 @@ func runEnrich() {
 	worker := &enrich.Worker{
 		Videos:      video.NewStore(conn),
 		Enrich:      enrich.NewStore(conn),
-		Transcriber: buildTranscriber(*whisperModel),
+		Transcriber: buildTranscriber(*whisperBin, *whisperModel, *whisperLang),
 		Summarizer:  buildSummarizer(*summarizer, *ollamaURL, *ollamaModel, *openrouterModel, log),
 		Categories:  splitCSV(*categoriesFlag),
 		Log:         log,
@@ -423,11 +427,11 @@ func buildSummarizer(name, ollamaURL, ollamaModel, openrouterModel string, log *
 	}
 }
 
-func buildTranscriber(modelPath string) transcribe.Transcriber {
+func buildTranscriber(bin, modelPath, lang string) transcribe.Transcriber {
 	if modelPath == "" {
 		return transcribe.Noop{}
 	}
-	return transcribe.WhisperCpp{ModelPath: modelPath}
+	return transcribe.WhisperCpp{Binary: bin, ModelPath: modelPath, Language: lang}
 }
 
 func splitCSV(s string) []string {

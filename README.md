@@ -56,6 +56,59 @@ Flags:
 | `-ollama-url` | `http://localhost:11434` | Ollama base URL |
 | `-ollama-model` | `llama3.2:3b` | Ollama model (must be pulled: `ollama pull <name>`) |
 | `-openrouter-model` | `anthropic/claude-3.5-haiku` | OpenRouter model id (set `OPENROUTER_API_KEY`) |
+| `-whisper-bin` | `whisper-cli` | whisper.cpp binary on `PATH` (or absolute path) — see "Enabling Whisper" |
+| `-whisper-model` | (empty) | Path to a whisper.cpp `.bin` model — empty disables transcription |
+| `-whisper-lang` | (empty) | Language hint for Whisper, e.g. `en`; empty = auto-detect |
+
+## Enabling Whisper transcription
+
+Transcription is **off by default** (no `-whisper-model` set → the
+`Noop` transcriber returns "unavailable" and the worker skips the step).
+Summaries still run; they just have title + description + (no
+transcript) to work with.
+
+Turn it on by installing [whisper.cpp](https://github.com/ggerganov/whisper.cpp)
+and pointing feedrig at the binary + a model file:
+
+```sh
+# 1) Build whisper.cpp (one-time, ~30s on a modern CPU)
+git clone https://github.com/ggerganov/whisper.cpp ~/whisper.cpp
+cd ~/whisper.cpp
+make            # produces ./build/bin/whisper-cli (or ./main on older builds)
+
+# 2) Download a model. base.en is the sweet spot for short reels:
+#    ~150 MB, fast on CPU, English-only. Other options: tiny.en (75 MB),
+#    small.en (500 MB), medium (1.5 GB).
+./models/download-ggml-model.sh base.en
+
+# 3) Make the binary discoverable, then run feedrig pointing at the model.
+sudo cp ./build/bin/whisper-cli /usr/local/bin/
+./feedrig \
+  -whisper-model ~/whisper.cpp/models/ggml-base.en.bin \
+  -whisper-lang en
+```
+
+If you skipped the `cp` step, pass an absolute path instead:
+`-whisper-bin ~/whisper.cpp/build/bin/whisper-cli`.
+
+**Re-enrich existing videos** (their transcripts populate one at a time
+as the worker tick processes them):
+
+```sh
+./feedrig enrich -whisper-model ~/whisper.cpp/models/ggml-base.en.bin <video-id>
+# or trigger the rescan path: nothing — every 30s the worker scans for
+# pending/failed enrichment_state rows and processes them.
+```
+
+**Notes:**
+- The OpenAI Python `whisper` CLI is *not* compatible (different argument
+  format). If you have it installed and want to use it, that's a small
+  follow-up — file an issue.
+- We extract a 16 kHz mono WAV via ffmpeg before invoking whisper.cpp,
+  matching the format whisper.cpp expects.
+- For non-English content, drop `-whisper-lang en` (or set it to the
+  right ISO code) and use `ggml-base.bin` (multilingual) instead of
+  `ggml-base.en.bin` (English-only).
 | `-whisper-model` | (empty) | Path to a `whisper.cpp` `.bin` model; empty disables transcription |
 | `-categories` | (preset list) | Comma-separated category menu shown to the summarizer |
 
