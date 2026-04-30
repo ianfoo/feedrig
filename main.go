@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -37,7 +38,7 @@ func main() {
 	if len(os.Args) >= 2 {
 		cmd := os.Args[1]
 		switch cmd {
-		case "mcp", "sweep", "poll", "enrich", "digest":
+		case "mcp", "sweep", "poll", "enrich", "digest", "status":
 			os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
 			switch cmd {
 			case "mcp":
@@ -50,6 +51,8 @@ func main() {
 				runEnrich()
 			case "digest":
 				runDigest()
+			case "status":
+				runStatus()
 			}
 			return
 		}
@@ -367,6 +370,122 @@ func envInt(name string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// runStatus prints a snapshot of what the running feedrig process is
+// doing — without touching the server. Reads the same SQLite DB the
+// server holds open (WAL mode allows concurrent readers).
+//
+// Use this before killing the server to know what's actively in flight.
+// On the latest code, in-flight work is recovered on restart anyway, but
+// status is still the fastest way to confirm "is anything happening?".
+func runStatus() {
+	dataDir := flag.String("data", "data", "directory holding feedrig.db")
+	flag.Parse()
+
+	conn, err := db.Open(filepath.Join(*dataDir, "feedrig.db"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "open db:", err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+
+	// Enrichment-state distribution.
+	rows, err := conn.QueryContext(ctx, `
+		SELECT enrichment_state, COUNT(*)
+		FROM videos GROUP BY enrichment_state ORDER BY enrichment_state
+	`)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "query:", err); os.Exit(1)
+	}
+	fmt.Println("enrichment state distribution:")
+	for rows.Next() {
+		var state string
+		var n int
+		if err := rows.Scan(&state, &n); err == nil {
+			fmt.Printf("  %-18s %d\n", state, n)
+		}
+	}
+	rows.Close()
+
+	// Currently 'running' rows — the worker is processing these (or was,
+	// if the process died without state-machine recovery).
+	rows, err = conn.QueryContext(ctx, `
+		SELECT id, COALESCE(title,'(untitled)'), state_changed_at
+		FROM videos WHERE enrichment_state = 'running'
+		ORDER BY state_changed_at DESC
+	`)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "query:", err); os.Exit(1)
+	}
+	fmt.Println("\nrunning enrichments:")
+	any := false
+	for rows.Next() {
+		any = true
+		var id, changed int64
+		var title string
+		if err := rows.Scan(&id, &title, &changed); err == nil {
+			ago := time.Since(time.Unix(changed, 0)).Round(time.Second)
+			fmt.Printf("  %d  %-50s  state-changed %s ago\n", id, truncateTo(title, 50), ago)
+		}
+	}
+	if !any {
+		fmt.Println("  (none — worker is idle)")
+	}
+	rows.Close()
+
+	// Pending count for queue depth visibility.
+	rows, err = conn.QueryContext(ctx, `SELECT COUNT(*) FROM videos WHERE enrichment_state = 'pending'`)
+	if err == nil {
+		var n int
+		if rows.Next() {
+			rows.Scan(&n)
+		}
+		rows.Close()
+		fmt.Printf("\npending enrichments: %d\n", n)
+	}
+
+	// Active subprocesses on this host (best-effort).
+	fmt.Println("\nactive ingest/enrich subprocesses (via ps):")
+	if out, err := runPS(); err != nil {
+		fmt.Println("  (ps failed:", err, ")")
+	} else if strings.TrimSpace(out) == "" {
+		fmt.Println("  (none)")
+	} else {
+		for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+			fmt.Println("  " + line)
+		}
+	}
+}
+
+func runPS() (string, error) {
+	// `ps -ax -o pid=,etime=,command=` then grep for the relevant binaries.
+	// Self-contained instead of shelling out to a pipeline.
+	cmd := exec.Command("ps", "-ax", "-o", "pid=,etime=,command=")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	wanted := []string{"yt-dlp", "whisper-cli", "whisper-cpp", "ollama runner", "ffmpeg"}
+	var keep []string
+	for _, line := range strings.Split(string(out), "\n") {
+		for _, w := range wanted {
+			if strings.Contains(line, w) && !strings.Contains(line, "grep ") && !strings.Contains(line, "feedrig status") {
+				keep = append(keep, strings.TrimSpace(line))
+				break
+			}
+		}
+	}
+	return strings.Join(keep, "\n"), nil
+}
+
+func truncateTo(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
 }
 
 // runMCP is the stdio MCP-server subcommand. Reads JSON-RPC from stdin and
