@@ -83,12 +83,16 @@ func main() {
 	if err := os.MkdirAll(*mediaDir, 0o755); err != nil {
 		log.Error("mkdir media", "err", err); os.Exit(1)
 	}
+	dataAbs, err := filepath.Abs(*dataDir)
+	if err != nil {
+		log.Error("abs data", "err", err); os.Exit(1)
+	}
 	mediaAbs, err := filepath.Abs(*mediaDir)
 	if err != nil {
 		log.Error("abs media", "err", err); os.Exit(1)
 	}
 
-	conn, err := db.Open(filepath.Join(*dataDir, "feedrig.db"))
+	conn, err := db.Open(filepath.Join(dataAbs, "feedrig.db"))
 	if err != nil {
 		log.Error("open db", "err", err); os.Exit(1)
 	}
@@ -153,7 +157,7 @@ func main() {
 	go sweeper.Run(ctx)
 
 	go func() {
-		log.Info("listening", "addr", *addr, "data", *dataDir, "media", mediaAbs)
+		log.Info("listening", "addr", *addr, "data", dataAbs, "media", mediaAbs)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error("listen", "err", err)
 			stop()
