@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
@@ -28,6 +28,49 @@ export default function Creators() {
         onSuccess: () => qc.invalidateQueries({ queryKey: ['creators'] }),
     })
 
+    const fetchAllMutation = useMutation({
+        mutationFn: () => api.fetchAll(),
+        onSuccess: () => qc.invalidateQueries({ queryKey: ['creators'] }),
+    })
+
+    const [bulkText, setBulkText] = useState('')
+    const bulkFileRef = useRef<HTMLInputElement>(null)
+    const bulkMutation = useMutation({
+        mutationFn: async () => {
+            let combined = bulkText
+            const f = bulkFileRef.current?.files?.[0]
+            if (f) {
+                combined = (combined ? combined + '\n' : '') + (await f.text())
+            }
+            return api.bulkAddCreators(combined)
+        },
+        onSuccess: () => {
+            setBulkText('')
+            if (bulkFileRef.current) bulkFileRef.current.value = ''
+            qc.invalidateQueries({ queryKey: ['creators'] })
+        },
+    })
+
+    const importFileRef = useRef<HTMLInputElement>(null)
+    const [importMsg, setImportMsg] = useState<string | null>(null)
+    const importFollowing = async (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault()
+        const f = importFileRef.current?.files?.[0]
+        if (!f) return
+        const fd = new FormData()
+        fd.append('file', f)
+        setImportMsg('Importing…')
+        // The legacy /creators/import endpoint accepts multipart and is
+        // the natural one to call from the SPA — no need for a separate
+        // JSON variant.
+        const r = await fetch('/creators/import', { method: 'POST', body: fd, redirect: 'manual' })
+        // Server redirects to /creators?flash=... which is fine; we surface the flash.
+        const flash = new URLSearchParams((r.headers.get('Location') ?? '').split('?')[1] ?? '').get('flash')
+        setImportMsg(flash ?? `${r.ok ? 'OK' : 'Failed'}: ${r.status}`)
+        if (importFileRef.current) importFileRef.current.value = ''
+        qc.invalidateQueries({ queryKey: ['creators'] })
+    }
+
     const filtered = (data ?? []).filter((c) => {
         const q = filter.trim().toLowerCase()
         if (!q) return true
@@ -47,14 +90,51 @@ export default function Creators() {
                     <button className="btn btn-primary" type="submit" disabled={addMutation.isPending}>Add</button>
                 </form>
                 {addMutation.error && <p className="text-danger text-sm mt-2">{(addMutation.error as Error).message}</p>}
-                <p className="text-fgdim text-sm mt-3">Bulk add and Instagram data-export import are on the legacy <a href="/creators">/creators</a> page until they're ported here.</p>
+
+                <details className="mt-4">
+                    <summary className="text-fgdim text-sm cursor-pointer">Bulk add (paste a list or upload .txt / .csv)</summary>
+                    <form className="mt-2 space-y-2" onSubmit={(e) => { e.preventDefault(); bulkMutation.mutate() }}>
+                        <textarea
+                            className="input"
+                            rows={5}
+                            value={bulkText}
+                            onChange={(e) => setBulkText(e.target.value)}
+                            placeholder={`One per line. Optionally "handle, Display Name". Comments start with #.\nnatgeo, National Geographic\nsamhowell\n# bass guitar:\nariadixongotbass`}
+                        />
+                        <div className="flex gap-2 items-center flex-wrap">
+                            <input ref={bulkFileRef} type="file" accept=".txt,.csv,text/plain,text/csv" className="text-xs text-fgdim" />
+                            <button type="submit" className="btn btn-primary" disabled={bulkMutation.isPending}>Add all</button>
+                        </div>
+                        {bulkMutation.data && (
+                            <p className="text-fgdim text-sm">Added {bulkMutation.data.added}, skipped {bulkMutation.data.skipped}, failed {bulkMutation.data.failed}.</p>
+                        )}
+                    </form>
+                </details>
+
+                <details className="mt-2">
+                    <summary className="text-fgdim text-sm cursor-pointer">Import from Instagram data export (following.json)</summary>
+                    <p className="text-fgdim text-xs mt-2">Settings → Accounts Center → Your information and permissions → Download your information → JSON. Inside the zip, find <code>connections/followers_and_following/following.json</code> and upload it here. Followed-on dates are imported when present.</p>
+                    <form className="mt-2 flex gap-2 items-center" onSubmit={importFollowing}>
+                        <input ref={importFileRef} type="file" accept=".json,application/json" required className="text-xs text-fgdim" />
+                        <button type="submit" className="btn btn-primary">Import</button>
+                    </form>
+                    {importMsg && <p className="text-fgdim text-sm mt-2">{importMsg}</p>}
+                </details>
             </section>
 
             <section className="panel">
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 flex-wrap mb-2">
                     <h2 className="text-base font-semibold">{filtered.length} creator{filtered.length !== 1 ? 's' : ''}</h2>
-                    <input className="input max-w-[220px]" type="search" placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+                    <input className="input max-w-[220px] ml-auto" type="search" placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+                    <button
+                        className="btn btn-primary"
+                        onClick={() => fetchAllMutation.mutate()}
+                        disabled={fetchAllMutation.isPending || filtered.length === 0}
+                    >Fetch all</button>
                 </div>
+                {fetchAllMutation.data && (
+                    <p className="text-fgdim text-sm mb-2">Started {fetchAllMutation.data.started}, skipped {fetchAllMutation.data.skipped} already running.</p>
+                )}
                 {isLoading && <p className="text-fgdim">Loading…</p>}
                 {error && <p className="text-danger">Failed to load: {(error as Error).message}</p>}
                 {!isLoading && filtered.length === 0 && <p className="text-fgdim">No creators yet.</p>}

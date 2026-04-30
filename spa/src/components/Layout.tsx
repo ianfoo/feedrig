@@ -1,13 +1,23 @@
 import { NavLink } from 'react-router-dom'
 import type { ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '../api'
 
 const tabs: { to: string; label: string }[] = [
     { to: '/creators', label: 'Creators' },
     { to: '/groups', label: 'Groups' },
     { to: '/search', label: 'Search' },
+    { to: '/pending', label: 'Pending' },
+    { to: '/settings', label: 'Settings' },
 ]
 
 export default function Layout({ children }: { children: ReactNode }) {
+    const { data: stats } = useQuery({
+        queryKey: ['stats'],
+        queryFn: api.getStats,
+        refetchInterval: 30_000,
+    })
+
     return (
         <div className="min-h-full pb-16 md:pb-0">
             <header className="sticky top-0 z-10 bg-panel/95 backdrop-blur border-b border-border">
@@ -16,13 +26,23 @@ export default function Layout({ children }: { children: ReactNode }) {
                         <CraneLogo className="w-5 h-5 text-accent" />
                         <span>feedrig</span>
                     </NavLink>
-                    <nav className="ml-auto hidden md:flex gap-3 text-sm">
+                    <nav className="ml-auto hidden md:flex gap-3 text-sm items-center">
                         {tabs.map((t) => (
                             <NavLink key={t.to} to={t.to} className={({ isActive }) =>
                                 'px-2 py-1 rounded-md ' +
                                 (isActive ? 'text-fg bg-panel2' : 'text-fgdim hover:text-fg')
-                            }>{t.label}</NavLink>
+                            }>
+                                {t.label}
+                                {t.to === '/pending' && stats && stats.pending_count > 0 && (
+                                    <span className="ml-1 inline-block bg-warn text-[#2a1f00] rounded-full px-1.5 text-xs font-semibold">{stats.pending_count}</span>
+                                )}
+                            </NavLink>
                         ))}
+                        {stats && (
+                            <span className="text-xs text-fgdim bg-panel2 border border-border rounded-full px-2 py-0.5" title={`${stats.video_count} videos`}>
+                                {stats.media_bytes_human}
+                            </span>
+                        )}
                     </nav>
                 </div>
             </header>
@@ -31,15 +51,18 @@ export default function Layout({ children }: { children: ReactNode }) {
                 {children}
             </main>
 
-            {/* Mobile bottom nav. Shown < md. */}
+            {/* Mobile bottom nav. Shown < md. Just first 3 tabs to fit. */}
             <nav className="md:hidden fixed bottom-0 inset-x-0 bg-panel/95 backdrop-blur border-t border-border z-10">
-                <div className="grid grid-cols-3">
+                <div className="grid grid-cols-5">
                     {tabs.map((t) => (
                         <NavLink key={t.to} to={t.to} className={({ isActive }) =>
-                            'py-3 text-center text-sm ' +
+                            'py-2.5 text-center text-xs ' +
                             (isActive ? 'text-fg bg-panel2' : 'text-fgdim')
                         }>
-                            {t.label}
+                            <div>{t.label}</div>
+                            {t.to === '/pending' && stats && stats.pending_count > 0 && (
+                                <div className="text-warn text-[10px] font-semibold">{stats.pending_count}</div>
+                            )}
                         </NavLink>
                     ))}
                 </div>

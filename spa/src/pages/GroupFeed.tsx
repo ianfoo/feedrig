@@ -56,6 +56,7 @@ export default function GroupFeed() {
                     <div className="flex gap-1.5 text-sm">
                         <a className="btn" href={`/groups/${slug}/digest`}>Digest</a>
                         <a className="btn" href={`/groups/${slug}/rss`} title="RSS feed">RSS</a>
+                        <Link className="btn" to={`/groups/${slug}/edit`}>Edit</Link>
                     </div>
                 </div>
 
