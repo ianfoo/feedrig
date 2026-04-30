@@ -432,21 +432,50 @@ func (s *Server) creatorDetail(w http.ResponseWriter, r *http.Request) {
 	latestWatchedID, _ := s.videos.LatestWatchedID(r.Context(), id)
 	topTags, _ := s.enrich.TopTagsForCreator(r.Context(), id, 6)
 
+	// Optional ?tag=foo filter — narrows the video grid to only videos
+	// carrying that tag, so the topic chips become a useful filter UI.
+	activeTag := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("tag")))
+
 	type row struct {
 		Video       video.Video
 		IsLastWatch bool
+		TagNames    []string
 	}
-	rows := make([]row, len(vids))
-	for i, v := range vids {
-		rows[i] = row{Video: v, IsLastWatch: v.ID == latestWatchedID}
+	rows := make([]row, 0, len(vids))
+	for _, v := range vids {
+		var tagNames []string
+		if tags, _ := s.enrich.TagsForVideo(r.Context(), v.ID); len(tags) > 0 {
+			tagNames = make([]string, len(tags))
+			for j, t := range tags {
+				tagNames[j] = t.Name
+			}
+		}
+		if activeTag != "" {
+			match := false
+			for _, n := range tagNames {
+				if n == activeTag {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+		rows = append(rows, row{
+			Video:       v,
+			IsLastWatch: v.ID == latestWatchedID,
+			TagNames:    tagNames,
+		})
 	}
 
 	s.render(w, "creator.html", map[string]any{
-		"Creator": c,
-		"Rows":    rows,
-		"TopTags": topTags,
-		"Flash":   r.URL.Query().Get("flash"),
-		"Error":   r.URL.Query().Get("err"),
+		"Creator":   c,
+		"Rows":      rows,
+		"TopTags":   topTags,
+		"ActiveTag": activeTag,
+		"Flash":     r.URL.Query().Get("flash"),
+		"Error":     r.URL.Query().Get("err"),
 	})
 }
 

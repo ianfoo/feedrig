@@ -11,8 +11,9 @@
                 {{with .Creator.FollowedAt}} · followed on IG {{humanTime .}}{{end}}
             </p>
             {{if .TopTags}}
-            <p class="meta">Topics:
-                {{range .TopTags}}<a href="/groups?tag={{.Name}}" class="tag tag-link">{{.Name}} <span class="tag-count">{{.Count}}</span></a>{{end}}
+            <p class="meta topic-row">Topics:
+                {{range .TopTags}}<a href="/creators/{{$.Creator.ID}}?tag={{.Name}}" class="tag tag-link {{if eq .Name $.ActiveTag}}tag-active-pill{{end}}">{{.Name}} <span class="tag-count">{{.Count}}</span></a>{{end}}
+                {{with .ActiveTag}}<a href="/creators/{{$.Creator.ID}}" class="clear-link">clear filter</a>{{end}}
             </p>
             {{end}}
         </div>
@@ -68,7 +69,7 @@
         {{end}}
     </ul>
     {{else}}
-    <p class="empty">No videos yet. Click "Fetch new" or paste a post URL above.</p>
+    <p class="empty">{{if .ActiveTag}}No videos tagged "{{.ActiveTag}}". <a href="/creators/{{.Creator.ID}}">Show all</a>.{{else}}No videos yet. Click "Fetch new" or paste a post URL above.{{end}}</p>
     {{end}}
 </section>
 
