@@ -18,13 +18,29 @@
         markActiveSpeed(video.playbackRate);
     });
 
-    // Speed buttons.
+    // Speed buttons. Set both defaultPlaybackRate (sticks across some
+    // browser-driven resets) and playbackRate (the active rate). Re-apply
+    // on loadeddata since some browsers reset playbackRate when metadata
+    // arrives. Also visually flash the button so it's obvious the click
+    // registered, since on macOS Safari the audio rate-change is subtle.
+    let currentSpeed = 1.0;
     const speedBtns = document.querySelectorAll('.speed-btn');
-    speedBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const s = parseFloat(btn.dataset.speed);
+    function applySpeed(s) {
+        currentSpeed = s;
+        try {
+            video.defaultPlaybackRate = s;
             video.playbackRate = s;
-            markActiveSpeed(s);
+        } catch (e) {
+            console.warn('playbackRate set failed', e);
+        }
+        markActiveSpeed(s);
+    }
+    speedBtns.forEach(btn => {
+        btn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            const s = parseFloat(btn.dataset.speed);
+            if (!isFinite(s) || s <= 0) return;
+            applySpeed(s);
         });
     });
     function markActiveSpeed(speed) {
@@ -32,6 +48,9 @@
             b.classList.toggle('active', Math.abs(parseFloat(b.dataset.speed) - speed) < 0.001);
         });
     }
+    // Some browsers reset playbackRate on loadeddata; re-apply.
+    video.addEventListener('loadeddata', () => applySpeed(currentSpeed));
+    video.addEventListener('ratechange', () => markActiveSpeed(video.playbackRate));
 
     // Position persistence: throttle to once per 4s + on pause/end.
     let lastSent = 0;

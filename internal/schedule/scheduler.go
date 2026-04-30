@@ -3,6 +3,7 @@ package schedule
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math/rand/v2"
 	"sync"
@@ -98,34 +99,60 @@ func (s *Scheduler) spawn() {
 	}
 }
 
-func (s *Scheduler) runOne(ctx context.Context, c creator.Creator, interval time.Duration) {
+func (s *Scheduler) runOne(parentCtx context.Context, c creator.Creator, interval time.Duration) {
 	defer s.wg.Done()
 
-	// Initial jitter: 0–60% of interval, capped at 5 minutes for short intervals.
-	jitter := time.Duration(rand.Int64N(int64(interval) / 2))
-	if jitter > 5*time.Minute {
-		jitter = 5 * time.Minute
-	}
-	timer := time.NewTimer(jitter)
+	// Initial jitter: random within [0, interval/2). For the default 6h
+	// interval this is 0–3h, smearing creators across the day so we don't
+	// hammer Instagram on every server start. No artificial cap — manual
+	// "Fetch all" handles "I want results now."
+	timer := time.NewTimer(time.Duration(rand.Int64N(int64(interval) / 2)))
 	defer timer.Stop()
+
+	// fetchCooldown skips a scheduled poll if the creator was fetched
+	// recently (manual click or another scheduler tick), avoiding redundant
+	// work and the cascade where two concurrent fetches both try to
+	// download the same shortcodes.
+	fetchCooldown := interval / 2
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-parentCtx.Done():
 			return
 		case <-timer.C:
 		}
-		runCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
-		added, err := s.Ingest.FetchNewForCreator(runCtx, &c)
-		cancel()
-		if err != nil {
-			s.log().Warn("scheduled fetch failed", "creator", c.Handle, "err", err)
-		} else if added > 0 {
-			s.log().Info("scheduled fetch added videos", "creator", c.Handle, "count", added)
+
+		if recent, ok := lastFetchedAt(parentCtx, s.Creators, c.ID); ok && time.Since(recent) < fetchCooldown {
+			s.log().Debug("scheduler: skipping recent fetch", "creator", c.Handle, "since", time.Since(recent))
+		} else {
+			runCtx, cancel := context.WithTimeout(parentCtx, 30*time.Minute)
+			added, err := s.Ingest.FetchNewForCreator(runCtx, &c)
+			cancel()
+			switch {
+			case err == nil:
+				if added > 0 {
+					s.log().Info("scheduled fetch added videos", "creator", c.Handle, "count", added)
+				}
+			case errors.Is(err, ingest.ErrAlreadyFetching):
+				// Manual fetch is in progress; let it own this round.
+			default:
+				s.log().Warn("scheduled fetch failed", "creator", c.Handle, "err", err)
+			}
 		}
+
 		// Reset for next cycle with small jitter (±10%).
 		j := time.Duration(rand.Int64N(int64(interval) / 5))
 		next := interval - interval/10 + j
 		timer.Reset(next)
 	}
+}
+
+// lastFetchedAt is a small helper that tolerates lookup errors silently —
+// if we can't read last_fetched_at we just proceed with the fetch.
+func lastFetchedAt(ctx context.Context, store *creator.Store, id int64) (time.Time, bool) {
+	c, err := store.Get(ctx, id)
+	if err != nil || c == nil || c.LastFetchedAt == nil {
+		return time.Time{}, false
+	}
+	return *c.LastFetchedAt, true
 }

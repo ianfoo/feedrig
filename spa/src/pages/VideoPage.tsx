@@ -29,6 +29,20 @@ export default function VideoPage() {
     const [speed, setSpeed] = useState(1)
     const lastSentRef = useRef(0)
 
+    // Re-apply speed on loadeddata so a browser-driven reset doesn't drop
+    // us back to 1×. The video element exists for the lifetime of this
+    // component so attaching once is fine.
+    useEffect(() => {
+        const v = videoRef.current
+        if (!v) return
+        const onLoaded = () => {
+            try { v.defaultPlaybackRate = speed } catch {}
+            v.playbackRate = speed
+        }
+        v.addEventListener('loadeddata', onLoaded)
+        return () => v.removeEventListener('loadeddata', onLoaded)
+    }, [speed])
+
     // Throttled position persistence: every 4s + on pause/end + on unload.
     useEffect(() => {
         const v = videoRef.current
@@ -125,7 +139,13 @@ export default function VideoPage() {
                             className={`btn ${speed === s ? 'btn-primary' : ''}`}
                             onClick={() => {
                                 const vv = videoRef.current
-                                if (vv) vv.playbackRate = s
+                                if (vv) {
+                                    // defaultPlaybackRate sticks across some
+                                    // browser resets; playbackRate is the
+                                    // active rate.
+                                    try { vv.defaultPlaybackRate = s } catch {}
+                                    vv.playbackRate = s
+                                }
                                 setSpeed(s)
                             }}
                         >{s}×</button>

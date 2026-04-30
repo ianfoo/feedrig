@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ianfoo/feedrig/internal/creator"
@@ -53,10 +52,6 @@ type Server struct {
 	// fan-outs). Set via SetBackgroundContext after construction; defaults
 	// to context.Background() if unset.
 	bgCtx context.Context
-
-	// fetching tracks in-progress per-creator fetches so we coalesce repeat
-	// clicks and surface "fetch in progress" in the UI.
-	fetching sync.Map // map[int64]struct{}
 }
 
 func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, st *settings.Store, gr *groups.Store, ing *ingest.Service, mediaRoot string, log *slog.Logger) (*Server, error) {
@@ -115,15 +110,19 @@ func (s *Server) backgroundCtx() context.Context {
 
 // startFetch attempts to start an async fetch for the given creator. Returns
 // true if this call started one, false if a fetch was already in flight (the
-// click is coalesced).
+// click is coalesced). Dedup happens inside the ingest service so the
+// scheduler shares the same in-flight set.
 func (s *Server) startFetch(c *creator.Creator) bool {
-	if _, busy := s.fetching.LoadOrStore(c.ID, struct{}{}); busy {
+	if s.ingest.IsFetching(c.ID) {
 		return false
 	}
 	go func() {
-		defer s.fetching.Delete(c.ID)
 		ctx := s.backgroundCtx()
 		added, err := s.ingest.FetchNewForCreator(ctx, c)
+		if errors.Is(err, ingest.ErrAlreadyFetching) {
+			// Lost the race against another goroutine; that's fine.
+			return
+		}
 		if err != nil {
 			s.log.Warn("background fetch", "creator", c.Handle, "err", err)
 			return
@@ -136,8 +135,7 @@ func (s *Server) startFetch(c *creator.Creator) bool {
 // IsFetching reports whether a fetch goroutine is currently running for
 // the creator. Used by the creator-list and creator-detail templates.
 func (s *Server) IsFetching(creatorID int64) bool {
-	_, ok := s.fetching.Load(creatorID)
-	return ok
+	return s.ingest.IsFetching(creatorID)
 }
 
 // SetBlob overrides the default LocalFS storage. Useful for tests and for a

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/ianfoo/feedrig/internal/creator"
@@ -51,6 +52,13 @@ type Service struct {
 	enricher  Enricher
 	mediaRoot string
 	log       *slog.Logger
+
+	// inFlight dedupes concurrent FetchNewForCreator calls for the same
+	// creator id (manual web click + scheduled poll racing each other).
+	// Without this, both loads would compute their "existing IDs" sets
+	// independently, race on yt-dlp, and second-place hits ErrDuplicate
+	// after burning the download.
+	inFlight sync.Map // map[int64]struct{}
 }
 
 func NewService(disc Discoverer, dl Downloader, creators *creator.Store, videos *video.Store, mediaRoot string, log *slog.Logger) *Service {
@@ -58,6 +66,13 @@ func NewService(disc Discoverer, dl Downloader, creators *creator.Store, videos 
 		log = slog.Default()
 	}
 	return &Service{disc: disc, dl: dl, creators: creators, videos: videos, mediaRoot: mediaRoot, log: log}
+}
+
+// IsFetching reports whether a fetch is currently in flight for the given
+// creator. Web layer surfaces this in the UI; scheduler skips on `true`.
+func (s *Service) IsFetching(creatorID int64) bool {
+	_, ok := s.inFlight.Load(creatorID)
+	return ok
 }
 
 // SetEnricher wires the enrichment worker; new downloads will be enqueued.
@@ -70,15 +85,22 @@ func (s *Service) SetEnricher(e Enricher) { s.enricher = e }
 const PerVideoDownloadTimeout = 5 * time.Minute
 
 // FetchNewForCreator discovers recent posts for the creator and downloads any
-// not yet stored. Returns the count of newly added videos. Discovery failures
-// are wrapped in ErrDiscovery so callers can suggest the manual-paste path.
+// not yet stored. Returns the count of newly added videos, or ErrAlreadyFetching
+// if another goroutine is already processing this creator.
 //
-// Each per-video download gets its own PerVideoDownloadTimeout so one slow
-// download doesn't kill the rest of the batch. The caller's ctx still bounds
-// the overall operation, but should be generous (server-life, not request-
-// life) — at 12 videos × up to 5 min each, total budget can exceed an hour
-// in pathological cases. The web layer detaches via a goroutine.
+// Discovery failures are wrapped in ErrDiscovery so callers can suggest the
+// manual-paste path. Each per-video download gets its own
+// PerVideoDownloadTimeout so one slow download doesn't kill the rest of the
+// batch. The caller's ctx still bounds the overall operation, but should be
+// generous (server-life, not request-life) — at 12 videos × up to 5 min each,
+// total budget can exceed an hour in pathological cases. The web layer
+// detaches via a goroutine.
 func (s *Service) FetchNewForCreator(ctx context.Context, c *creator.Creator) (int, error) {
+	if _, busy := s.inFlight.LoadOrStore(c.ID, struct{}{}); busy {
+		return 0, ErrAlreadyFetching
+	}
+	defer s.inFlight.Delete(c.ID)
+
 	codes, err := s.disc.Recent(ctx, c.Handle)
 	if err != nil {
 		return 0, fmt.Errorf("%w: %v", ErrDiscovery, err)
@@ -101,12 +123,13 @@ func (s *Service) FetchNewForCreator(ctx context.Context, c *creator.Creator) (i
 		}
 		url := fmt.Sprintf("https://www.instagram.com/p/%s/", code)
 		dlCtx, cancel := context.WithTimeout(ctx, PerVideoDownloadTimeout)
-		_, err := s.fetchURL(dlCtx, c, url)
+		v, err := s.fetchURL(dlCtx, c, url)
 		cancel()
 		if err != nil {
 			s.log.Warn("download failed", "creator", c.Handle, "code", code, "err", err)
 			continue
 		}
+		s.log.Info("download succeeded", "creator", c.Handle, "code", code, "video_id", v.ID, "title", v.Title)
 		added++
 	}
 	if err := s.creators.MarkFetched(ctx, c.ID); err != nil {
@@ -186,6 +209,7 @@ func (s *Service) fetchURL(ctx context.Context, c *creator.Creator, url string) 
 }
 
 var (
-	ErrDiscovery   = errors.New("profile discovery unavailable")
-	ErrAlreadyHave = errors.New("video already in library")
+	ErrDiscovery       = errors.New("profile discovery unavailable")
+	ErrAlreadyHave     = errors.New("video already in library")
+	ErrAlreadyFetching = errors.New("a fetch is already in progress for this creator")
 )
