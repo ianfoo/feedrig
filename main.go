@@ -59,6 +59,7 @@ func main() {
 	dataDir := flag.String("data", "data", "directory for sqlite db")
 	mediaDir := flag.String("media", "media", "directory for downloaded videos")
 	cookies := flag.String("cookies", "", "optional path to instagram cookies file (yt-dlp format)")
+	ytdlpBin := flag.String("yt-dlp-bin", "yt-dlp", "yt-dlp binary on PATH or absolute path (use the standalone binary if your system yt-dlp breaks on Python 3.14)")
 	discoverer := flag.String("discoverer", "auto", "discovery strategy: auto|chromedp|instago|none")
 	chromePath := flag.String("chrome", "", "path to chromium/chrome binary (default: search PATH)")
 	summarizer := flag.String("summarizer", "auto", "summarizer: auto|ollama|openrouter|stub|none (auto = ollama if reachable else stub)")
@@ -96,7 +97,7 @@ func main() {
 	disc := buildDiscoverer(*discoverer, *chromePath, *cookies, log)
 	ingestSvc := ingest.NewService(
 		disc,
-		ingest.YtDlpDownloader{CookieFile: *cookies},
+		ingest.YtDlpDownloader{Binary: *ytdlpBin, CookieFile: *cookies},
 		creators, videos, mediaAbs, log,
 	)
 
@@ -199,6 +200,7 @@ func runPoll() {
 	mediaDir := flag.String("media", "media", "directory for downloaded videos")
 	cookies := flag.String("cookies", "", "optional yt-dlp cookies file")
 	chromePath := flag.String("chrome", "", "path to chromium binary")
+	ytdlpBin := flag.String("yt-dlp-bin", "yt-dlp", "yt-dlp binary on PATH or absolute path")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
@@ -219,7 +221,7 @@ func runPoll() {
 	videos := video.NewStore(conn)
 
 	disc := buildDiscoverer("auto", *chromePath, *cookies, log)
-	svc := ingest.NewService(disc, ingest.YtDlpDownloader{CookieFile: *cookies}, creators, videos, mediaAbs, log)
+	svc := ingest.NewService(disc, ingest.YtDlpDownloader{Binary: *ytdlpBin, CookieFile: *cookies}, creators, videos, mediaAbs, log)
 
 	// Look up by handle. If absent, register first so the IDs are stable.
 	cs, _ := creators.List(context.Background(), creator.SortHandle)

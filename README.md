@@ -50,6 +50,7 @@ Flags:
 | `-data` | `data` | SQLite DB directory |
 | `-media` | `media` | Downloaded video directory |
 | `-cookies` | (empty) | Optional `yt-dlp`-format cookie file for IG auth |
+| `-yt-dlp-bin` | `yt-dlp` | Override the `yt-dlp` binary — see "yt-dlp on macOS" if Homebrew's version crashes on Python 3.14 |
 | `-discoverer` | `auto` | `auto` (chromedp → instago) / `chromedp` / `instago` / `none` |
 | `-chrome` | (empty) | Path to Chromium/Chrome (default: search PATH) |
 | `-summarizer` | `auto` | `auto` (probes ollama then falls back to stub) / `ollama` / `openrouter` / `stub` / `none` |
@@ -59,6 +60,37 @@ Flags:
 | `-whisper-bin` | `whisper-cli` | whisper.cpp binary on `PATH` (or absolute path) — see "Enabling Whisper" |
 | `-whisper-model` | (empty) | Path to a whisper.cpp `.bin` model — empty disables transcription |
 | `-whisper-lang` | (empty) | Language hint for Whisper, e.g. `en`; empty = auto-detect |
+
+## yt-dlp on macOS (Python 3.14 workaround)
+
+Homebrew's `yt-dlp` formula installs against whatever Python it
+considers current — at the moment that's Python 3.14, which has a
+known incompatibility producing errors like:
+
+```
+python: posix_spawn: ...Python.app/Contents/MacOS/Python: Undefined error: 0
+```
+
+The fix is to use the **standalone yt-dlp binary** that ships with
+Python embedded:
+
+```sh
+mkdir -p ~/bin
+curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos \
+  -o ~/bin/yt-dlp
+chmod +x ~/bin/yt-dlp
+xattr -d com.apple.quarantine ~/bin/yt-dlp 2>/dev/null || true
+~/bin/yt-dlp --version    # confirm it runs
+```
+
+Then point feedrig at it:
+
+```sh
+./feedrig -yt-dlp-bin ~/bin/yt-dlp ...
+```
+
+Or add `~/bin` to your `PATH` ahead of `/opt/homebrew/bin` and the
+default `-yt-dlp-bin yt-dlp` will pick it up.
 
 ## Enabling Whisper transcription
 
