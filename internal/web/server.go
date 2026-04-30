@@ -572,6 +572,7 @@ func (s *Server) player(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summary, _ := s.enrich.GetSummary(r.Context(), v.ID)
+	transcript, _ := s.enrich.GetTranscript(r.Context(), v.ID)
 	tags, _ := s.enrich.TagsForVideo(r.Context(), v.ID)
 
 	mediaURL := s.publicURL(v.FilePath)
@@ -581,15 +582,16 @@ func (s *Server) player(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "player.html", map[string]any{
-		"Video":    v,
-		"Creator":  c,
-		"Watch":    watch,
-		"Summary":  summary,
-		"Tags":     tags,
-		"Prev":     prev, // newer
-		"Next":     next, // older
-		"MediaURL": mediaURL,
-		"ThumbURL": thumbURL,
+		"Video":      v,
+		"Creator":    c,
+		"Watch":      watch,
+		"Summary":    summary,
+		"Transcript": transcript,
+		"Tags":       tags,
+		"Prev":       prev, // newer
+		"Next":       next, // older
+		"MediaURL":   mediaURL,
+		"ThumbURL":   thumbURL,
 	})
 }
 

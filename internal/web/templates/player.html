@@ -55,6 +55,12 @@
             <p class="meta tiny">{{.Summary.Model}} · {{humanTime .Summary.GeneratedAt}}</p>
         </div>
         {{end}}
+        {{with .Transcript}}
+        <details class="description-block transcript-block">
+            <summary>Transcript ({{.Model}}, {{len .Text}} chars)</summary>
+            <p class="description">{{.Text}}</p>
+        </details>
+        {{end}}
         {{with .Video.Description}}<details class="description-block"><summary>Original caption</summary><p class="description">{{.}}</p></details>{{end}}
         <p class="hint">Keyboard: <kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> prev/next video · <kbd>J</kbd>/<kbd>L</kbd> seek 5s · <kbd>1</kbd>–<kbd>7</kbd> speed</p>
     </section>

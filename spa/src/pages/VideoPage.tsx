@@ -184,6 +184,12 @@ export default function VideoPage() {
                         <p className="mt-1">{v.summary}</p>
                     </div>
                 )}
+                {v.transcript && (
+                    <details className="mt-3">
+                        <summary className="text-fgdim text-sm cursor-pointer">Transcript ({v.transcript.length.toLocaleString()} chars)</summary>
+                        <p className="whitespace-pre-wrap mt-2 text-sm leading-relaxed">{v.transcript}</p>
+                    </details>
+                )}
                 {v.description && (
                     <details className="mt-3">
                         <summary className="text-fgdim text-sm cursor-pointer">Original caption</summary>

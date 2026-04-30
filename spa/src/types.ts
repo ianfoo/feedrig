@@ -29,6 +29,7 @@ export interface Video {
     thumbnail_url?: string
     tags?: string[]
     summary?: string
+    transcript?: string
 }
 
 export interface Group {

@@ -83,6 +83,7 @@ type videoDTO struct {
 	ThumbnailURL    string   `json:"thumbnail_url,omitempty"`
 	Tags            []string `json:"tags,omitempty"`
 	Summary         string   `json:"summary,omitempty"`
+	Transcript      string   `json:"transcript,omitempty"`
 }
 
 func (s *Server) toVideoDTO(v video.Video) videoDTO {
@@ -205,6 +206,9 @@ func (s *Server) apiGetVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	if sm, _ := s.enrich.GetSummary(r.Context(), v.ID); sm != nil {
 		d.Summary = sm.Summary
+	}
+	if t, _ := s.enrich.GetTranscript(r.Context(), v.ID); t != nil {
+		d.Transcript = t.Text
 	}
 	writeJSON(w, http.StatusOK, d)
 }
