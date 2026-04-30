@@ -219,13 +219,24 @@ func (s *Store) SetEnrichmentState(ctx context.Context, videoID int64, state Sta
 	return err
 }
 
-// PendingVideoIDs returns video IDs whose enrichment is pending or failed
-// (we re-run failed jobs on next worker startup; if they fail again the
-// failure persists so we don't loop forever).
+// PendingVideoIDs returns video IDs the worker should pick up.
+//
+// 'pending' rows are always included.
+//
+// 'running' rows are included too — by the time the worker calls this, the
+// only goroutine that could legitimately own a 'running' row was killed by
+// the previous process exit. Without this, kills during transcribe/summarize
+// orphan the row forever. Single-process assumption: there's exactly one
+// worker per DB. See ARCHITECTURE.md "in-flight durability."
+//
+// 'failed' rows are included only when includeFailed=true (used at the
+// 30s periodic rescan, off by default to avoid retry loops; the startup
+// rescan calls with includeFailed=true so a previous-instance crash also
+// retries failures).
 func (s *Store) PendingVideoIDs(ctx context.Context, includeFailed bool) ([]int64, error) {
-	q := `SELECT id FROM videos WHERE enrichment_state = 'pending'`
+	q := `SELECT id FROM videos WHERE enrichment_state IN ('pending', 'running')`
 	if includeFailed {
-		q = `SELECT id FROM videos WHERE enrichment_state IN ('pending', 'failed')`
+		q = `SELECT id FROM videos WHERE enrichment_state IN ('pending', 'running', 'failed')`
 	}
 	q += ` ORDER BY downloaded_at DESC`
 	rows, err := s.db.QueryContext(ctx, q)

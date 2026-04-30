@@ -55,14 +55,18 @@ func (w *Worker) log() *slog.Logger {
 	return slog.Default()
 }
 
-// Run starts the worker loop. It periodically rescans the DB for pending or
-// failed-only-once videos and processes the queue until ctx is canceled.
+// Run starts the worker loop. The startup rescan also picks up 'running'
+// and 'failed' rows so a previous-instance crash recovers cleanly:
+// 'running' = the previous worker died mid-pipeline; 'failed' = previous
+// run errored and we'll retry once across this restart boundary. The
+// periodic rescan is more conservative (pending + running only) so failed
+// rows don't loop forever within a single process lifetime.
 func (w *Worker) Run(ctx context.Context) {
 	w.ensureInit()
 	w.wg.Add(1)
 	defer w.wg.Done()
 
-	w.rescan(ctx)
+	w.rescan(ctx, true) // startup: include 'failed' for crash recovery
 	rescanTicker := time.NewTicker(rescanInterval)
 	defer rescanTicker.Stop()
 
@@ -71,7 +75,7 @@ func (w *Worker) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-rescanTicker.C:
-			w.rescan(ctx)
+			w.rescan(ctx, false)
 		case id := <-w.queue:
 			w.process(ctx, id)
 		}
@@ -80,8 +84,10 @@ func (w *Worker) Run(ctx context.Context) {
 
 const rescanInterval = 30 * time.Second
 
-func (w *Worker) rescan(ctx context.Context) {
-	ids, err := w.Enrich.PendingVideoIDs(ctx, false) // pending-only; failed stays failed until restarted
+// rescan re-enqueues any DB rows the worker should pick up. includeFailed
+// is true at startup (crash recovery) and false during steady-state ticks.
+func (w *Worker) rescan(ctx context.Context, includeFailed bool) {
+	ids, err := w.Enrich.PendingVideoIDs(ctx, includeFailed)
 	if err != nil {
 		w.log().Warn("rescan failed", "err", err)
 		return

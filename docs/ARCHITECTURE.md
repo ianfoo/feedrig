@@ -86,6 +86,20 @@ The ingestion service iterates discovered shortcodes, skips any already in the D
 - **Media:** local disk under `media/<handle>/<shortcode>.<ext>`. Thumbnails: `<shortcode>.jpg`. yt-dlp metadata: `<shortcode>.info.json`.
 - **Hosted future:** introduce a `storage.Blob` interface; current local-disk impl moves under it; add an S3 impl. Database stays as SQLite single-tenant; if multi-user emerges, move to Postgres.
 
+## In-flight durability
+
+feedrig is a single-process app with goroutines waiting on synchronous responses. Killing the process (Ctrl-C, SIGTERM) cancels the root context, which propagates to every in-flight subprocess (yt-dlp, whisper-cli) and HTTP call (Ollama, OpenRouter). There is **no separate job daemon, no work queue server, and no correlation IDs beyond `video_id` / `creator + code` in log lines**.
+
+Durability comes from the database state machine:
+
+| Stage | Anchor | What happens at kill |
+| --- | --- | --- |
+| **Download** | `videos` row not inserted until yt-dlp succeeds | Row absent → next `FetchNewForCreator` re-downloads. Any `.part` file is overwritten by yt-dlp on retry. |
+| **Enrichment** | `videos.enrichment_state` ∈ `pending` / `running` / `done` / `failed` / `skipped` | Row left in `running`. Worker recovers via startup rescan: `pending` + `running` + `failed` are all re-enqueued; subsequent periodic rescans (every 30s) include only `pending` + `running` so that genuinely-broken `failed` videos don't loop. |
+| **Watch position** | `watch_state.last_position_seconds`, persisted every 4s + on pause/end via `sendBeacon` | Worst case: lose the last <4s of unflushed scrub. |
+
+This is good enough for single-user, single-host. If we ever want true distributed durability (durable job queue with claim semantics across multiple workers), the migration path is to put the queue in SQLite (or Redis) with row-level locks, but that's a v1.x conversation, not v0.x.
+
 ## Security posture (single-user local-first)
 
 - Binds `127.0.0.1` by default.
