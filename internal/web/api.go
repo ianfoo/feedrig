@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ianfoo/feedrig/internal/creator"
 	"github.com/ianfoo/feedrig/internal/groups"
+	"github.com/ianfoo/feedrig/internal/settings"
+	"github.com/ianfoo/feedrig/internal/stats"
 	"github.com/ianfoo/feedrig/internal/video"
 )
 
@@ -29,6 +32,398 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/groups", s.apiListGroups)
 	mux.HandleFunc("GET /api/v1/groups/{slug}/feed", s.apiGroupFeed)
 	mux.HandleFunc("GET /api/v1/search", s.apiSearch)
+
+	// Library + worker stats. Cheap, ~30s cached.
+	mux.HandleFunc("GET /api/v1/stats", s.apiStats)
+
+	// Settings (global tunables: poll cadence, TTL, grace, metadata TTL).
+	mux.HandleFunc("GET /api/v1/settings", s.apiGetSettings)
+	mux.HandleFunc("PUT /api/v1/settings", s.apiPutSettings)
+
+	// Per-creator detail + actions.
+	mux.HandleFunc("GET /api/v1/creators/{id}/videos", s.apiCreatorVideos)
+	mux.HandleFunc("POST /api/v1/creators/{id}/fetch", s.apiCreatorFetch)
+	mux.HandleFunc("POST /api/v1/creators/{id}/cadence", s.apiCreatorCadence)
+	mux.HandleFunc("POST /api/v1/creators/fetch-all", s.apiFetchAll)
+	mux.HandleFunc("POST /api/v1/creators/bulk", s.apiBulkAddCreators)
+
+	// Groups CRUD + members + reorder.
+	mux.HandleFunc("POST /api/v1/groups", s.apiCreateGroup)
+	mux.HandleFunc("GET /api/v1/groups/{slug}", s.apiGetGroup)
+	mux.HandleFunc("PUT /api/v1/groups/{slug}", s.apiUpdateGroup)
+	mux.HandleFunc("DELETE /api/v1/groups/{slug}", s.apiDeleteGroup)
+	mux.HandleFunc("POST /api/v1/groups/{slug}/members", s.apiSetGroupMembers)
+	mux.HandleFunc("POST /api/v1/groups/{slug}/reorder", s.apiReorderGroup)
+
+	// Pending-deletion review.
+	mux.HandleFunc("GET /api/v1/pending", s.apiPendingList)
+	mux.HandleFunc("POST /api/v1/videos/{id}/restore", s.apiRestoreVideo)
+	mux.HandleFunc("POST /api/v1/videos/{id}/redownload", s.apiRedownloadVideo)
+}
+
+func (s *Server) apiStats(w http.ResponseWriter, r *http.Request) {
+	if s.stats == nil {
+		writeJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	snap := s.stats.Latest(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"media_bytes":       snap.MediaBytes,
+		"media_bytes_human": stats.HumanBytes(snap.MediaBytes),
+		"video_count":       snap.VideoCount,
+		"saved_count":       snap.SavedCount,
+		"archived_count":    snap.ArchivedCount,
+		"pending_count":     snap.PendingCount,
+		"generated_at":      snap.GeneratedAt.Unix(),
+	})
+}
+
+// --- Settings ---
+
+func (s *Server) apiGetSettings(w http.ResponseWriter, r *http.Request) {
+	pollInt := s.settings.PollInterval(r.Context())
+	ttl, grace := s.settings.TTL(r.Context())
+	metaTTL := s.settings.MetadataTTL(r.Context())
+	out := map[string]any{
+		"poll_hours":  int(pollInt.Hours()),
+		"ttl_days":    settings.DaysFromDuration(ttl),
+		"grace_days":  settings.DaysFromDuration(grace),
+	}
+	if metaTTL > 0 {
+		out["metadata_ttl_days"] = settings.DaysFromDuration(metaTTL)
+	} else {
+		out["metadata_ttl_days"] = 0
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) apiPutSettings(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		PollHours       *int `json:"poll_hours"`
+		TTLDays         *int `json:"ttl_days"`
+		GraceDays       *int `json:"grace_days"`
+		MetadataTTLDays *int `json:"metadata_ttl_days"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if body.PollHours != nil && *body.PollHours > 0 {
+		seconds := int((time.Duration(*body.PollHours) * time.Hour).Seconds())
+		_ = s.settings.Set(r.Context(), settings.KeyDefaultPollInterval, strconv.Itoa(seconds))
+	}
+	if body.TTLDays != nil && *body.TTLDays > 0 {
+		_ = s.settings.Set(r.Context(), settings.KeyTTLDays, strconv.Itoa(*body.TTLDays))
+	}
+	if body.GraceDays != nil && *body.GraceDays > 0 {
+		_ = s.settings.Set(r.Context(), settings.KeyGraceDays, strconv.Itoa(*body.GraceDays))
+	}
+	if body.MetadataTTLDays != nil && *body.MetadataTTLDays >= 0 {
+		_ = s.settings.Set(r.Context(), settings.KeyMetadataTTLDays, strconv.Itoa(*body.MetadataTTLDays))
+	}
+	s.reload()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Per-creator videos + actions ---
+
+func (s *Server) apiCreatorVideos(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	includeAll := r.URL.Query().Get("include_archived") == "1"
+	var vids []video.Video
+	if includeAll {
+		vids, err = s.videos.ListForCreatorAll(r.Context(), id)
+	} else {
+		vids, err = s.videos.ListForCreator(r.Context(), id, false)
+	}
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]videoDTO, len(vids))
+	for i, v := range vids {
+		d := s.toVideoDTO(v)
+		if tags, _ := s.enrich.TagsForVideo(r.Context(), v.ID); len(tags) > 0 {
+			d.Tags = make([]string, len(tags))
+			for j, t := range tags {
+				d.Tags[j] = t.Name
+			}
+		}
+		if sm, _ := s.enrich.GetSummary(r.Context(), v.ID); sm != nil {
+			d.Summary = sm.Summary
+		}
+		out[i] = d
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) apiCreatorFetch(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	c, err := s.creators.Get(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	started := s.startFetch(c)
+	writeJSON(w, http.StatusAccepted, map[string]any{"started": started, "creator": c.Handle})
+}
+
+func (s *Server) apiFetchAll(w http.ResponseWriter, r *http.Request) {
+	cs, err := s.creators.List(r.Context(), creator.SortHandle)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	started, skipped := 0, 0
+	for i := range cs {
+		c := cs[i]
+		if s.startFetch(&c) {
+			started++
+		} else {
+			skipped++
+		}
+	}
+	writeJSON(w, http.StatusAccepted, map[string]int{"started": started, "skipped": skipped})
+}
+
+func (s *Server) apiCreatorCadence(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var body struct {
+		PollHours int `json:"poll_hours"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	var seconds int64
+	if body.PollHours > 0 {
+		seconds = int64((time.Duration(body.PollHours) * time.Hour).Seconds())
+	}
+	if err := s.creators.SetPollIntervalSeconds(r.Context(), id, seconds); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.reload()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) apiBulkAddCreators(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		List string `json:"list"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	res := s.creators.BulkAdd(r.Context(), body.List)
+	if len(res.Added) > 0 {
+		s.reload()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"added":   len(res.Added),
+		"skipped": len(res.Skipped),
+		"failed":  len(res.Failures),
+	})
+}
+
+// --- Groups CRUD ---
+
+type groupBody struct {
+	Name        string   `json:"name"`
+	RecencyDays int      `json:"recency_days"`
+	IncludeTags []string `json:"include_tags"`
+	ExcludeTags []string `json:"exclude_tags"`
+}
+
+func (s *Server) apiCreateGroup(w http.ResponseWriter, r *http.Request) {
+	var body groupBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	g, err := s.groups.Create(r.Context(), body.Name, body.RecencyDays, body.IncludeTags, body.ExcludeTags)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, toGroupDTO(*g))
+}
+
+func (s *Server) apiGetGroup(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		writeJSONError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	members, _ := s.groups.Members(r.Context(), g.ID)
+	type memberDTO struct {
+		CreatorID int64 `json:"creator_id"`
+		Excluded  bool  `json:"excluded"`
+	}
+	mds := make([]memberDTO, len(members))
+	for i, m := range members {
+		mds[i] = memberDTO{CreatorID: m.CreatorID, Excluded: m.Excluded}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"group":   toGroupDTO(*g),
+		"members": mds,
+	})
+}
+
+func (s *Server) apiUpdateGroup(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		writeJSONError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body groupBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := s.groups.Update(r.Context(), g.ID, body.Name, body.RecencyDays, body.IncludeTags, body.ExcludeTags); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) apiDeleteGroup(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		writeJSONError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.groups.Delete(r.Context(), g.ID); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) apiSetGroupMembers(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		writeJSONError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body struct {
+		Include []int64 `json:"include"`
+		Exclude []int64 `json:"exclude"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := s.groups.SetMembers(r.Context(), g.ID, body.Include, body.Exclude); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) apiReorderGroup(w http.ResponseWriter, r *http.Request) {
+	g, err := s.groups.GetBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, groups.ErrNotFound) {
+		writeJSONError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body struct {
+		Dir string `json:"dir"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	dir := -1
+	if body.Dir == "down" {
+		dir = 1
+	}
+	if err := s.groups.Reorder(r.Context(), g.ID, dir); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Pending review ---
+
+func (s *Server) apiPendingList(w http.ResponseWriter, r *http.Request) {
+	vids, err := s.videos.ListByState(r.Context(), video.StatePendingDeletion)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]videoDTO, len(vids))
+	creatorCache := map[int64]string{}
+	for i, v := range vids {
+		d := s.toVideoDTO(v)
+		// Inline the creator handle into the DTO via Tags as a hack? No —
+		// the SPA already calls /api/v1/creators to hydrate; client-side
+		// join.
+		_ = creatorCache
+		out[i] = d
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) apiRestoreVideo(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if err := s.videos.SetState(r.Context(), id, video.StateActive); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) apiRedownloadVideo(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	v, err := s.videos.Get(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	go func() {
+		ctx := s.backgroundCtx()
+		if err := s.ingest.Redownload(ctx, v); err != nil {
+			s.log.Warn("api redownload", "video_id", id, "err", err)
+		}
+	}()
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // ---- helpers ----

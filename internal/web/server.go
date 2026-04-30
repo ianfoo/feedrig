@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ianfoo/feedrig/internal/creator"
@@ -20,6 +21,7 @@ import (
 	"github.com/ianfoo/feedrig/internal/groups"
 	"github.com/ianfoo/feedrig/internal/ingest"
 	"github.com/ianfoo/feedrig/internal/settings"
+	"github.com/ianfoo/feedrig/internal/stats"
 	"github.com/ianfoo/feedrig/internal/storage"
 	"github.com/ianfoo/feedrig/internal/video"
 )
@@ -52,6 +54,12 @@ type Server struct {
 	// fan-outs). Set via SetBackgroundContext after construction; defaults
 	// to context.Background() if unset.
 	bgCtx context.Context
+
+	// fetching: in-progress per-creator fetches, for coalescing + UI badges.
+	fetching sync.Map // map[int64]struct{}
+
+	// stats: cached library counts + media bytes. Refreshed every 30s.
+	stats *stats.Computer
 }
 
 func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, st *settings.Store, gr *groups.Store, ing *ingest.Service, mediaRoot string, log *slog.Logger) (*Server, error) {
@@ -80,6 +88,23 @@ func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, s
 			}
 			return srv.blob.PublicURL(key)
 		},
+		// stats returns the cached library snapshot; called from the
+		// shared topbar template since {{template "head" ...}} doesn't
+		// pass through the page's data root.
+		"stats": func() map[string]any {
+			if srv.stats == nil {
+				return nil
+			}
+			snap := srv.stats.Latest(context.Background())
+			return map[string]any{
+				"MediaBytes":      snap.MediaBytes,
+				"MediaBytesHuman": stats.HumanBytes(snap.MediaBytes),
+				"VideoCount":      snap.VideoCount,
+				"SavedCount":      snap.SavedCount,
+				"ArchivedCount":   snap.ArchivedCount,
+				"PendingCount":    snap.PendingCount,
+			}
+		},
 	}).ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
@@ -100,6 +125,11 @@ func (s *Server) SetBackgroundContext(ctx context.Context) {
 		s.bgCtx = ctx
 	}
 }
+
+// SetStatsComputer wires the cached library stats (media bytes + counts)
+// surfaced in the topbar and on /api/v1/stats. Optional; if unset, the
+// stats template var is empty and the API endpoint returns zeros.
+func (s *Server) SetStatsComputer(c *stats.Computer) { s.stats = c }
 
 func (s *Server) backgroundCtx() context.Context {
 	if s.bgCtx != nil {

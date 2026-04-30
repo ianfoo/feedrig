@@ -25,6 +25,7 @@ import (
 	"github.com/ianfoo/feedrig/internal/mcp"
 	"github.com/ianfoo/feedrig/internal/schedule"
 	"github.com/ianfoo/feedrig/internal/settings"
+	"github.com/ianfoo/feedrig/internal/stats"
 	"github.com/ianfoo/feedrig/internal/summarize"
 	"github.com/ianfoo/feedrig/internal/transcribe"
 	"github.com/ianfoo/feedrig/internal/ttl"
@@ -146,6 +147,10 @@ func main() {
 	}
 	srv.SetScheduler(scheduler)
 	srv.SetBackgroundContext(ctx)
+	srv.SetStatsComputer(&stats.Computer{
+		DB:        conn,
+		MediaRoot: mediaAbs,
+	})
 	go scheduler.Run(ctx)
 
 	sweeper := &ttl.Sweeper{

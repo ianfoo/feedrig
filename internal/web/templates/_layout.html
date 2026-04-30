@@ -18,8 +18,9 @@
             <a href="/creators">Creators</a>
             <a href="/groups">Groups</a>
             <a href="/search">Search</a>
-            <a href="/pending">Pending</a>
+            <a href="/pending">Pending{{with stats}}{{if gt .PendingCount 0}} <span class="nav-count">{{.PendingCount}}</span>{{end}}{{end}}</a>
             <a href="/settings">Settings</a>
+            {{with stats}}<span class="nav-stat" title="Media library size — {{.VideoCount}} videos">{{.MediaBytesHuman}}</span>{{end}}
             <a href="/app/" title="React SPA (mobile-first)">SPA →</a>
         </nav>
     </header>
