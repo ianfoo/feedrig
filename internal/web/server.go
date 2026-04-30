@@ -117,17 +117,13 @@ func (s *Server) startFetch(c *creator.Creator) bool {
 		return false
 	}
 	go func() {
-		ctx := s.backgroundCtx()
-		added, err := s.ingest.FetchNewForCreator(ctx, c)
-		if errors.Is(err, ingest.ErrAlreadyFetching) {
-			// Lost the race against another goroutine; that's fine.
-			return
-		}
-		if err != nil {
+		// The ingest service emits its own start / discovery / per-video /
+		// done logs with elapsed times — no extra logging needed here. We
+		// only care about the error tail.
+		_, err := s.ingest.FetchNewForCreator(s.backgroundCtx(), c)
+		if err != nil && !errors.Is(err, ingest.ErrAlreadyFetching) {
 			s.log.Warn("background fetch", "creator", c.Handle, "err", err)
-			return
 		}
-		s.log.Info("background fetch done", "creator", c.Handle, "added", added)
 	}()
 	return true
 }

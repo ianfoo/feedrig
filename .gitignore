@@ -37,6 +37,8 @@ go.work.sum
 /media/*
 !/media/.gitkeep
 /feedrig
+/tmp/
+/build-errors.log
 
 # SPA build artifacts
 /spa/node_modules/

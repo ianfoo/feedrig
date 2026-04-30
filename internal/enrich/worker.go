@@ -119,6 +119,9 @@ func (w *Worker) process(ctx context.Context, videoID int64) {
 		_ = w.Enrich.SetEnrichmentState(ctx, videoID, StateFailed, err.Error())
 		return
 	}
+	log = log.With("title", v.Title)
+	log.Info("enrich starting")
+	enrichStart := time.Now()
 
 	in := summarize.Input{
 		Title:       v.Title,
@@ -128,32 +131,43 @@ func (w *Worker) process(ctx context.Context, videoID int64) {
 
 	// Step 1: transcribe (best-effort).
 	if w.Transcriber != nil {
+		log.Info("transcribe starting")
+		tStart := time.Now()
 		tctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		tres, terr := w.Transcriber.Transcribe(tctx, v.FilePath)
 		cancel()
-		if terr == nil && tres != nil {
+		tElapsed := time.Since(tStart).Round(time.Millisecond)
+		switch {
+		case terr == nil && tres != nil:
 			if err := w.Enrich.UpsertTranscript(ctx, Transcript{
 				VideoID: videoID, Text: tres.Text, Language: tres.Language, Model: tres.Model,
 			}); err != nil {
 				log.Warn("save transcript", "err", err)
 			}
 			in.Transcript = tres.Text
-		} else if !errors.Is(terr, transcribe.ErrUnavailable) {
-			log.Warn("transcribe", "err", terr)
+			log.Info("transcribe done", "model", tres.Model, "chars", len(tres.Text), "elapsed", tElapsed)
+		case errors.Is(terr, transcribe.ErrUnavailable):
+			log.Info("transcribe skipped", "reason", "unavailable", "elapsed", tElapsed)
+		default:
+			log.Warn("transcribe failed", "elapsed", tElapsed, "err", terr)
 		}
 	}
 
 	// Step 2: summarize.
 	if w.Summarizer != nil {
+		log.Info("summarize starting")
+		sStart := time.Now()
 		sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		sres, serr := w.Summarizer.Summarize(sctx, in)
 		cancel()
+		sElapsed := time.Since(sStart).Round(time.Millisecond)
 		if serr != nil {
 			if errors.Is(serr, summarize.ErrUnavailable) {
+				log.Info("summarize skipped", "reason", "unavailable", "elapsed", sElapsed)
 				_ = w.Enrich.SetEnrichmentState(ctx, videoID, StateSkipped, "summarizer unavailable")
 				return
 			}
-			log.Warn("summarize", "err", serr)
+			log.Warn("summarize failed", "elapsed", sElapsed, "err", serr)
 			_ = w.Enrich.SetEnrichmentState(ctx, videoID, StateFailed, serr.Error())
 			return
 		}
@@ -169,9 +183,11 @@ func (w *Worker) process(ctx context.Context, videoID int64) {
 				log.Warn("save tags", "err", err)
 			}
 		}
+		log.Info("summarize done", "model", sres.Model, "tags", len(sres.Tags), "elapsed", sElapsed)
 	}
 
 	if err := w.Enrich.SetEnrichmentState(ctx, videoID, StateDone, ""); err != nil {
 		log.Warn("set done", "err", err)
 	}
+	log.Info("enrich done", "elapsed", time.Since(enrichStart).Round(time.Millisecond))
 }

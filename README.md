@@ -42,6 +42,28 @@ make docker
 docker run -p 7777:7777 -v feedrig-data:/data -v feedrig-media:/media feedrig
 ```
 
+## Live reload during development
+
+Two complementary watchers — run them in two terminals:
+
+```sh
+# Terminal 1: Go live-reload via Air. Rebuilds on .go / template /
+# static asset changes. Installs Air on first use.
+make dev
+
+# Terminal 2: Vite dev server for the SPA. Edits to .tsx files
+# update the running page in your browser within ~50ms — without
+# losing component state, scroll position, or open modals (HMR =
+# Hot Module Replacement; just-in-time module swap, no page reload).
+# Browse to http://localhost:5173/app/ — Vite proxies /api/ and
+# /media/ to the Go server (assumed running on :7777 from Terminal 1).
+make dev-spa
+```
+
+The legacy server-rendered UI is at `http://localhost:7777/`.
+The SPA in production-embed mode is at `http://localhost:7777/app/`.
+The SPA in dev (HMR) mode is at `http://localhost:5173/app/`.
+
 Flags:
 
 | Flag | Default | Purpose |
