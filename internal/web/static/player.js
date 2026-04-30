@@ -74,7 +74,13 @@
     });
     window.addEventListener('beforeunload', () => persist(video.duration > 0 && video.currentTime / video.duration > 0.9));
 
-    // Keyboard.
+    // Keyboard nav.
+    //
+    // Naked ArrowLeft/ArrowRight are intentionally NOT trapped — they fall
+    // through to the native <video> element's 5s-seek handler. Use
+    // Shift/Alt+arrow to navigate between videos. Wheel-scroll-to-next was
+    // removed: it conflicted with ordinary page scrolling for the
+    // transcript / caption blocks below the player.
     const speedSequence = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5];
     document.addEventListener('keydown', (e) => {
         // Ignore when typing in form fields.
@@ -89,20 +95,15 @@
                 if (e.shiftKey || e.altKey) {
                     e.preventDefault();
                     if (prevURL) window.location.href = prevURL;
-                } else if (!e.metaKey && !e.ctrlKey) {
-                    // Default browser arrow seeks 5s in <video>; let it.
-                    if (prevURL && e.repeat === false && video.currentTime < 0.5) {
-                        // If at very start, jump to prev video.
-                        e.preventDefault();
-                        window.location.href = prevURL;
-                    }
                 }
+                // else: let the native video element seek -5s.
                 break;
             case 'ArrowRight':
                 if (e.shiftKey || e.altKey) {
                     e.preventDefault();
                     if (nextURL) window.location.href = nextURL;
                 }
+                // else: let the native video element seek +5s.
                 break;
             case 'j':
             case 'J':
@@ -123,26 +124,9 @@
                 if (e.key >= '1' && e.key <= '7') {
                     const idx = parseInt(e.key, 10) - 1;
                     if (idx < speedSequence.length) {
-                        video.playbackRate = speedSequence[idx];
-                        markActiveSpeed(speedSequence[idx]);
+                        applySpeed(speedSequence[idx]);
                     }
                 }
         }
     });
-
-    // Wheel-based scroll-through-videos (deliberately conservative: requires
-    // big delta + cooldown so it doesn't fire on incidental trackpad noise).
-    let wheelCooldown = 0;
-    shell.addEventListener('wheel', (e) => {
-        const now = Date.now();
-        if (now - wheelCooldown < 600) return;
-        if (Math.abs(e.deltaY) < 80) return;
-        if (e.deltaY > 0 && nextURL) {
-            wheelCooldown = now;
-            window.location.href = nextURL;
-        } else if (e.deltaY < 0 && prevURL) {
-            wheelCooldown = now;
-            window.location.href = prevURL;
-        }
-    }, { passive: true });
 })();
