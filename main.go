@@ -190,7 +190,7 @@ func runSweep() {
 		log.Error("sweep", "err", err)
 		os.Exit(1)
 	}
-	log.Info("sweep done", "aged", res.Aged, "archived", res.Archived, "purged", res.Purged)
+	log.Info("sweep completed", "aged", res.Aged, "archived", res.Archived, "purged", res.Purged)
 }
 
 // runPoll fetches new videos for one creator and exits. Useful for cron
@@ -243,7 +243,7 @@ func runPoll() {
 	if err != nil {
 		log.Error("poll", "err", err); os.Exit(1)
 	}
-	log.Info("poll done", "handle", handle, "added", added)
+	log.Info("poll completed", "handle", handle, "added", added)
 }
 
 // runEnrich runs the transcribe→summarize→tag pipeline on one video
@@ -289,7 +289,7 @@ func runEnrich() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	worker.ProcessOne(ctx, id)
-	log.Info("enrich done", "video_id", id)
+	log.Info("enrich completed", "video_id", id)
 }
 
 // runDigest renders the digest for one group and either prints it to stdout

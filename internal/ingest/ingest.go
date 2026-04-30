@@ -110,7 +110,7 @@ func (s *Service) FetchNewForCreator(ctx context.Context, c *creator.Creator) (i
 		s.log.Warn("discovery failed", "creator", c.Handle, "elapsed", time.Since(discStart).Round(time.Millisecond), "err", err)
 		return 0, fmt.Errorf("%w: %v", ErrDiscovery, err)
 	}
-	s.log.Info("discovery done", "creator", c.Handle, "count", len(codes), "elapsed", time.Since(discStart).Round(time.Millisecond))
+	s.log.Info("discovery completed", "creator", c.Handle, "count", len(codes), "elapsed", time.Since(discStart).Round(time.Millisecond))
 	existing, err := s.videos.ExistingExternalIDs(ctx, c.ID)
 	if err != nil {
 		return 0, fmt.Errorf("load existing: %w", err)
@@ -144,7 +144,7 @@ func (s *Service) FetchNewForCreator(ctx context.Context, c *creator.Creator) (i
 	if err := s.creators.MarkFetched(ctx, c.ID); err != nil {
 		s.log.Warn("mark fetched", "err", err)
 	}
-	s.log.Info("fetch done", "creator", c.Handle, "added", added, "elapsed", time.Since(batchStart).Round(time.Millisecond))
+	s.log.Info("fetch completed", "creator", c.Handle, "added", added, "elapsed", time.Since(batchStart).Round(time.Millisecond))
 	return added, nil
 }
 

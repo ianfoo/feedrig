@@ -145,7 +145,7 @@ func (w *Worker) process(ctx context.Context, videoID int64) {
 				log.Warn("save transcript", "err", err)
 			}
 			in.Transcript = tres.Text
-			log.Info("transcribe done", "model", tres.Model, "chars", len(tres.Text), "elapsed", tElapsed)
+			log.Info("transcribe completed", "model", tres.Model, "chars", len(tres.Text), "elapsed", tElapsed)
 		case errors.Is(terr, transcribe.ErrUnavailable):
 			log.Info("transcribe skipped", "reason", "unavailable", "elapsed", tElapsed)
 		default:
@@ -183,11 +183,11 @@ func (w *Worker) process(ctx context.Context, videoID int64) {
 				log.Warn("save tags", "err", err)
 			}
 		}
-		log.Info("summarize done", "model", sres.Model, "tags", len(sres.Tags), "elapsed", sElapsed)
+		log.Info("summarize completed", "model", sres.Model, "tags", len(sres.Tags), "elapsed", sElapsed)
 	}
 
 	if err := w.Enrich.SetEnrichmentState(ctx, videoID, StateDone, ""); err != nil {
-		log.Warn("set done", "err", err)
+		log.Warn("save final state", "err", err)
 	}
-	log.Info("enrich done", "elapsed", time.Since(enrichStart).Round(time.Millisecond))
+	log.Info("enrich completed", "elapsed", time.Since(enrichStart).Round(time.Millisecond))
 }
