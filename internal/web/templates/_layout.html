@@ -13,8 +13,9 @@
             <img src="/static/logo.svg" alt="" class="brand-logo">
             <span>feedrig</span>
         </a>
-        {{with .Crumb}}<span class="crumb">{{.}}</span>{{end}}
+        {{with .Crumb}}<a href="/creators" class="crumb-link">← <span class="crumb">{{.}}</span></a>{{end}}
         <nav class="nav-right">
+            <a href="/creators">Creators</a>
             <a href="/groups">Groups</a>
             <a href="/search">Search</a>
             <a href="/pending">Pending</a>

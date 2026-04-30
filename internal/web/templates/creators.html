@@ -48,30 +48,39 @@
 
 <section class="panel">
     <div class="row-between">
-        <h2 style="margin:0">{{len .Creators}} creator{{if ne (len .Creators) 1}}s{{end}}</h2>
-        <input id="creator-filter" type="search" placeholder="Filter…" class="filter-input">
+        <h2 style="margin:0">{{len .Rows}} creator{{if ne (len .Rows) 1}}s{{end}}{{if .AnyFetching}} · {{.AnyFetching}} fetching{{end}}</h2>
+        <div class="header-actions">
+            <input id="creator-filter" type="search" placeholder="Filter…" class="filter-input">
+            <form method="post" action="/creators/fetch-all" style="display:inline">
+                <button type="submit" class="primary" {{if not .Rows}}disabled{{end}}>Fetch all</button>
+            </form>
+        </div>
     </div>
 
-    {{if .Creators}}
+    {{if .Rows}}
     <ul class="creator-list" id="creator-list">
-        {{range .Creators}}
-        <li data-handle="{{.Handle}}" data-name="{{.DisplayName}}">
+        {{range .Rows}}
+        <li data-handle="{{.Creator.Handle}}" data-name="{{.Creator.DisplayName}}">
             <div class="creator-row">
-                <a href="/creators/{{.ID}}" class="creator-link">
-                    <span class="handle">@{{.Handle}}</span>
-                    {{with .DisplayName}}<span class="dn">{{.}}</span>{{end}}
+                <a href="/creators/{{.Creator.ID}}" class="creator-link">
+                    <span class="handle">@{{.Creator.Handle}}</span>
+                    {{with .Creator.DisplayName}}<span class="dn">{{.}}</span>{{end}}
+                    {{if .IsFetching}}<span class="badge fetching-badge">fetching…</span>{{end}}
                 </a>
                 <span class="meta">
-                    {{with .FollowedAt}}followed {{humanTime .}} · {{end}}
-                    {{with .LastFetchedAt}}fetched {{humanTime .}}{{else}}never fetched{{end}}
+                    {{with .Creator.FollowedAt}}followed {{humanTime .}} · {{end}}
+                    {{with .Creator.LastFetchedAt}}fetched {{humanTime .}}{{else}}never fetched{{end}}
                 </span>
+                <form method="post" action="/creators/{{.Creator.ID}}/fetch" style="display:inline">
+                    <button type="submit" class="tiny" {{if .IsFetching}}disabled{{end}}>Fetch</button>
+                </form>
                 <details class="row-actions">
                     <summary>⋯</summary>
-                    <form method="post" action="/creators/{{.ID}}/update" class="inline-form">
-                        <input name="display_name" value="{{.DisplayName}}" placeholder="display name">
+                    <form method="post" action="/creators/{{.Creator.ID}}/update" class="inline-form">
+                        <input name="display_name" value="{{.Creator.DisplayName}}" placeholder="display name">
                         <button type="submit">Save</button>
                     </form>
-                    <form method="post" action="/creators/{{.ID}}/delete" onsubmit="return confirm('Remove @{{.Handle}}? Their downloaded videos remain (cascade delete is off).')">
+                    <form method="post" action="/creators/{{.Creator.ID}}/delete" onsubmit="return confirm('Remove @{{.Creator.Handle}}? Their downloaded videos remain (cascade delete is off).')">
                         <button type="submit" class="danger">Remove</button>
                     </form>
                 </details>

@@ -64,9 +64,20 @@ func NewService(disc Discoverer, dl Downloader, creators *creator.Store, videos 
 // Safe to leave unset; the service degrades to no enrichment.
 func (s *Service) SetEnricher(e Enricher) { s.enricher = e }
 
+// PerVideoDownloadTimeout caps a single yt-dlp invocation. Long enough for
+// the largest reels and slow networks; short enough that a stuck fetch
+// doesn't wedge the per-creator iteration loop.
+const PerVideoDownloadTimeout = 5 * time.Minute
+
 // FetchNewForCreator discovers recent posts for the creator and downloads any
 // not yet stored. Returns the count of newly added videos. Discovery failures
 // are wrapped in ErrDiscovery so callers can suggest the manual-paste path.
+//
+// Each per-video download gets its own PerVideoDownloadTimeout so one slow
+// download doesn't kill the rest of the batch. The caller's ctx still bounds
+// the overall operation, but should be generous (server-life, not request-
+// life) — at 12 videos × up to 5 min each, total budget can exceed an hour
+// in pathological cases. The web layer detaches via a goroutine.
 func (s *Service) FetchNewForCreator(ctx context.Context, c *creator.Creator) (int, error) {
 	codes, err := s.disc.Recent(ctx, c.Handle)
 	if err != nil {
@@ -82,8 +93,17 @@ func (s *Service) FetchNewForCreator(ctx context.Context, c *creator.Creator) (i
 		if existing[code] {
 			continue
 		}
+		// Bail early if the parent ctx is already done — no point starting
+		// a fresh sub-context just to time out immediately.
+		if err := ctx.Err(); err != nil {
+			s.log.Warn("fetch loop canceled", "creator", c.Handle, "err", err)
+			break
+		}
 		url := fmt.Sprintf("https://www.instagram.com/p/%s/", code)
-		if _, err := s.fetchURL(ctx, c, url); err != nil {
+		dlCtx, cancel := context.WithTimeout(ctx, PerVideoDownloadTimeout)
+		_, err := s.fetchURL(dlCtx, c, url)
+		cancel()
+		if err != nil {
 			s.log.Warn("download failed", "creator", c.Handle, "code", code, "err", err)
 			continue
 		}

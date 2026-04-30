@@ -333,6 +333,11 @@ button.danger:hover { background: var(--danger); color: #1a0808; }
 .danger-summary { color: var(--danger); cursor: pointer; }
 
 .creator-actions { display: flex; gap: 0.5rem; align-items: center; }
+.header-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.fetching-badge { background: var(--warn); color: #2a1f00; margin-left: 0.5rem; font-weight: 500; animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+.crumb-link { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--fg-dim); text-decoration: none; }
+.crumb-link:hover { color: var(--fg); text-decoration: none; }
 
 .archived-shell {
     position: relative;

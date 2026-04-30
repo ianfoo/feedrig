@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ianfoo/feedrig/internal/creator"
@@ -46,6 +47,16 @@ type Server struct {
 	blob      storage.Blob // routes URL generation; LocalFS today, S3 later
 	tpl       *template.Template
 	log       *slog.Logger
+
+	// bgCtx is the long-lived context used for work that outlasts a single
+	// HTTP request (per-creator fetches that take minutes; per-creator-group
+	// fan-outs). Set via SetBackgroundContext after construction; defaults
+	// to context.Background() if unset.
+	bgCtx context.Context
+
+	// fetching tracks in-progress per-creator fetches so we coalesce repeat
+	// clicks and surface "fetch in progress" in the UI.
+	fetching sync.Map // map[int64]struct{}
 }
 
 func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, st *settings.Store, gr *groups.Store, ing *ingest.Service, mediaRoot string, log *slog.Logger) (*Server, error) {
@@ -85,6 +96,49 @@ func NewServer(creators *creator.Store, videos *video.Store, en *enrich.Store, s
 // SetScheduler wires the scheduler so creator-mutating handlers can hot-
 // reload it. Safe to leave unset; reloads simply become no-ops.
 func (s *Server) SetScheduler(r SchedulerReloader) { s.scheduler = r }
+
+// SetBackgroundContext wires the long-lived context the server uses for
+// detached work (e.g. per-creator fetches that outlive the originating
+// HTTP request). Defaults to context.Background() if not called.
+func (s *Server) SetBackgroundContext(ctx context.Context) {
+	if ctx != nil {
+		s.bgCtx = ctx
+	}
+}
+
+func (s *Server) backgroundCtx() context.Context {
+	if s.bgCtx != nil {
+		return s.bgCtx
+	}
+	return context.Background()
+}
+
+// startFetch attempts to start an async fetch for the given creator. Returns
+// true if this call started one, false if a fetch was already in flight (the
+// click is coalesced).
+func (s *Server) startFetch(c *creator.Creator) bool {
+	if _, busy := s.fetching.LoadOrStore(c.ID, struct{}{}); busy {
+		return false
+	}
+	go func() {
+		defer s.fetching.Delete(c.ID)
+		ctx := s.backgroundCtx()
+		added, err := s.ingest.FetchNewForCreator(ctx, c)
+		if err != nil {
+			s.log.Warn("background fetch", "creator", c.Handle, "err", err)
+			return
+		}
+		s.log.Info("background fetch done", "creator", c.Handle, "added", added)
+	}()
+	return true
+}
+
+// IsFetching reports whether a fetch goroutine is currently running for
+// the creator. Used by the creator-list and creator-detail templates.
+func (s *Server) IsFetching(creatorID int64) bool {
+	_, ok := s.fetching.Load(creatorID)
+	return ok
+}
 
 // SetBlob overrides the default LocalFS storage. Useful for tests and for a
 // future S3-backed deployment without changing the call sites that already
@@ -157,6 +211,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /creators/import", s.importFollowing)
 	mux.HandleFunc("GET /creators/{id}", s.creatorDetail)
 	mux.HandleFunc("GET /creators/{id}/history", s.creatorHistory)
+	mux.HandleFunc("POST /creators/fetch-all", s.fetchAll)
 	mux.HandleFunc("POST /creators/{id}/fetch", s.fetchNew)
 	mux.HandleFunc("POST /creators/{id}/add-url", s.addByURL)
 	mux.HandleFunc("POST /creators/{id}/update", s.updateCreator)
@@ -209,11 +264,25 @@ func (s *Server) listCreators(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	type row struct {
+		Creator    creator.Creator
+		IsFetching bool
+	}
+	rows := make([]row, len(cs))
+	anyFetching := 0
+	for i, c := range cs {
+		f := s.IsFetching(c.ID)
+		if f {
+			anyFetching++
+		}
+		rows[i] = row{Creator: c, IsFetching: f}
+	}
 	s.render(w, "creators.html", map[string]any{
-		"Creators": cs,
-		"Sort":     string(order),
-		"Flash":    r.URL.Query().Get("flash"),
-		"Error":    r.URL.Query().Get("err"),
+		"Rows":        rows,
+		"Sort":        string(order),
+		"AnyFetching": anyFetching,
+		"Flash":       r.URL.Query().Get("flash"),
+		"Error":       r.URL.Query().Get("err"),
 	})
 }
 
@@ -397,22 +466,40 @@ func (s *Server) fetchNew(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-	added, err := s.ingest.FetchNewForCreator(ctx, c)
-	if err != nil {
-		msg := err.Error()
-		if errors.Is(err, ingest.ErrDiscovery) {
-			msg = "Profile discovery failed (Instagram likely blocked the scrape). Use the 'Add by URL' form below to paste post URLs manually."
-		}
-		http.Redirect(w, r, fmt.Sprintf("/creators/%d?err=%s", id, escape(msg)), http.StatusFound)
-		return
-	}
-	flash := fmt.Sprintf("Fetched %d new", added)
-	if added == 0 {
-		flash = "No new posts"
+	flash := "Fetch started in background — refresh in a minute to see new videos"
+	if !s.startFetch(c) {
+		flash = "Already fetching @" + c.Handle + " in the background"
 	}
 	http.Redirect(w, r, fmt.Sprintf("/creators/%d?flash=%s", id, escape(flash)), http.StatusFound)
+}
+
+// fetchAll kicks off background fetches for every creator. Coalesces with
+// already-running fetches via startFetch. Returns immediately.
+func (s *Server) fetchAll(w http.ResponseWriter, r *http.Request) {
+	cs, err := s.creators.List(r.Context(), creator.SortHandle)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	started, skipped := 0, 0
+	for i := range cs {
+		c := cs[i]
+		if s.startFetch(&c) {
+			started++
+		} else {
+			skipped++
+		}
+	}
+	flash := fmt.Sprintf("Started %d background fetch%s; %d already running",
+		started, plural(started, "", "es"), skipped)
+	http.Redirect(w, r, "/creators?flash="+escape(flash), http.StatusFound)
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func (s *Server) addByURL(w http.ResponseWriter, r *http.Request) {

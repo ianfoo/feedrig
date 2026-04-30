@@ -137,6 +137,7 @@ func main() {
 		Log:      log,
 	}
 	srv.SetScheduler(scheduler)
+	srv.SetBackgroundContext(ctx)
 	go scheduler.Run(ctx)
 
 	sweeper := &ttl.Sweeper{
