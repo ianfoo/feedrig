@@ -46,7 +46,8 @@ type Enricher interface {
 // Service orchestrates discovery + download + persistence.
 type Service struct {
 	disc      Discoverer
-	dl        Downloader
+	dl        Downloader // full media download
+	preview   Downloader // metadata + thumbnail only (for preview-mode creators)
 	creators  *creator.Store
 	videos    *video.Store
 	enricher  Enricher
@@ -55,9 +56,6 @@ type Service struct {
 
 	// inFlight dedupes concurrent FetchNewForCreator calls for the same
 	// creator id (manual web click + scheduled poll racing each other).
-	// Without this, both loads would compute their "existing IDs" sets
-	// independently, race on yt-dlp, and second-place hits ErrDuplicate
-	// after burning the download.
 	inFlight sync.Map // map[int64]struct{}
 }
 
@@ -67,6 +65,11 @@ func NewService(disc Discoverer, dl Downloader, creators *creator.Store, videos 
 	}
 	return &Service{disc: disc, dl: dl, creators: creators, videos: videos, mediaRoot: mediaRoot, log: log}
 }
+
+// SetPreviewer wires the metadata-only downloader used for creators whose
+// ingest_mode is 'preview'. Optional: without it, preview-mode creators
+// silently fall back to the full downloader.
+func (s *Service) SetPreviewer(p Downloader) { s.preview = p }
 
 // IsFetching reports whether a fetch is currently in flight for the given
 // creator. Web layer surfaces this in the UI; scheduler skips on `true`.
@@ -148,6 +151,18 @@ func (s *Service) FetchNewForCreator(ctx context.Context, c *creator.Creator) (i
 	return added, nil
 }
 
+// Promote turns a preview-state row into a full download: fetches the media
+// file with the standard yt-dlp downloader, fills in file_path on the
+// existing row, sets state='active', and enqueues enrichment. Used by
+// "Watch now" on a preview card.
+//
+// Implementation reuses the redownload helper since the row-update shape is
+// the same — the only differences (state transition, enrichment enqueue)
+// happen automatically.
+func (s *Service) Promote(ctx context.Context, v *video.Video) error {
+	return s.Redownload(ctx, v)
+}
+
 // Redownload fetches a video that's already in the store (typically in the
 // archived state because its media file was reaped by the TTL sweeper),
 // replaces the on-disk file, and resets the row to active. Re-enqueues
@@ -183,8 +198,18 @@ func (s *Service) FetchURL(ctx context.Context, c *creator.Creator, url string) 
 }
 
 func (s *Service) fetchURL(ctx context.Context, c *creator.Creator, url string) (*video.Video, error) {
+	// Pick the right downloader based on the creator's ingest mode. If the
+	// previewer isn't configured for some reason, fall back to the full
+	// downloader so the user still gets something rather than nothing.
+	dl := s.dl
+	preview := false
+	if c.IngestMode == creator.IngestPreview && s.preview != nil {
+		dl = s.preview
+		preview = true
+	}
+
 	outDir := filepath.Join(s.mediaRoot, c.Handle)
-	res, err := s.dl.Download(ctx, url, outDir)
+	res, err := dl.Download(ctx, url, outDir)
 	if err != nil {
 		return nil, fmt.Errorf("download: %w", err)
 	}
@@ -203,6 +228,9 @@ func (s *Service) fetchURL(ctx context.Context, c *creator.Creator, url string) 
 		t := res.PostedAt
 		v.PostedAt = &t
 	}
+	if preview {
+		v.State = video.StatePreview
+	}
 
 	id, err := s.videos.Insert(ctx, v)
 	if err != nil {
@@ -212,7 +240,10 @@ func (s *Service) fetchURL(ctx context.Context, c *creator.Creator, url string) 
 		return nil, fmt.Errorf("persist: %w", err)
 	}
 	v.ID = id
-	if s.enricher != nil {
+	// Don't transcribe / summarize previews — there's no media file to
+	// transcribe, and summarizing the IG caption alone produces low-value
+	// output. Enrichment kicks in on promote.
+	if !preview && s.enricher != nil {
 		s.enricher.Enqueue(id)
 	}
 	return v, nil

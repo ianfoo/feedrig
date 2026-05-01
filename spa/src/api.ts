@@ -44,8 +44,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
     listCreators: () => req<Creator[]>('/api/v1/creators'),
-    addCreator: (handle: string, display_name?: string) =>
-        req<Creator>('/api/v1/creators', { method: 'POST', body: JSON.stringify({ handle, display_name }) }),
+    addCreator: (handle: string, display_name?: string, ingest_mode?: 'full' | 'preview') =>
+        req<Creator>('/api/v1/creators', { method: 'POST', body: JSON.stringify({ handle, display_name, ingest_mode }) }),
+    setCreatorMode: (id: number, mode: 'full' | 'preview') =>
+        req<void>(`/api/v1/creators/${id}/mode`, { method: 'POST', body: JSON.stringify({ mode }) }),
+    setCreatorTTL: (id: number, ttl_days: number) =>
+        req<void>(`/api/v1/creators/${id}/ttl`, { method: 'POST', body: JSON.stringify({ ttl_days }) }),
     deleteCreator: (id: number) =>
         req<void>(`/api/v1/creators/${id}`, { method: 'DELETE' }),
 
@@ -99,6 +103,10 @@ export const api = {
         req<void>(`/api/v1/videos/${id}/restore`, { method: 'POST' }),
     redownloadVideo: (id: number) =>
         req<void>(`/api/v1/videos/${id}/redownload`, { method: 'POST' }),
+    promoteVideo: (id: number) =>
+        req<void>(`/api/v1/videos/${id}/download`, { method: 'POST' }),
+    bulkAddCreatorsWithMode: (list: string, ingest_mode?: 'full' | 'preview') =>
+        req<{ added: number; skipped: number; failed: number }>('/api/v1/creators/bulk', { method: 'POST', body: JSON.stringify({ list, ingest_mode }) }),
 
     getSettings: () => req<Settings>('/api/v1/settings'),
     putSettings: (body: Partial<Settings>) =>

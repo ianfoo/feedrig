@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { api } from '../api'
 import VideoCard from '../components/VideoCard'
+import ModePicker from '../components/ModePicker'
+import type { IngestMode } from '../types'
 
 export default function CreatorDetail() {
     const { id } = useParams<{ id: string }>()
@@ -38,6 +40,23 @@ export default function CreatorDetail() {
 
     const cadenceMutation = useMutation({
         mutationFn: () => api.setCadence(cid, pollHours === '' ? 0 : parseInt(pollHours, 10)),
+        onSuccess: () => qc.invalidateQueries({ queryKey: ['creators'] }),
+    })
+
+    const modeMutation = useMutation({
+        mutationFn: (m: IngestMode) => api.setCreatorMode(cid, m),
+        onSuccess: () => qc.invalidateQueries({ queryKey: ['creators'] }),
+    })
+
+    const [ttlOverride, setTTLOverride] = useState<string>('')
+    useEffect(() => {
+        if (c?.ttl_days_override !== undefined) {
+            setTTLOverride(c.ttl_days_override > 0 ? String(c.ttl_days_override) : '')
+        }
+    }, [c?.ttl_days_override])
+
+    const ttlMutation = useMutation({
+        mutationFn: () => api.setCreatorTTL(cid, ttlOverride === '' ? 0 : parseInt(ttlOverride, 10)),
         onSuccess: () => qc.invalidateQueries({ queryKey: ['creators'] }),
     })
 
@@ -100,7 +119,7 @@ export default function CreatorDetail() {
                         )}
                     </div>
                     <div className="flex gap-2 items-center">
-                        <a href={`/creators/${cid}/history`} className="btn">History</a>
+                        <Link to={`/creators/${cid}/history`} className="btn">History</Link>
                         <button
                             className="btn btn-primary"
                             onClick={() => fetchMutation.mutate()}
@@ -118,23 +137,37 @@ export default function CreatorDetail() {
 
             <section className="panel">
                 <details>
-                    <summary className="text-fgdim text-sm cursor-pointer">Polling cadence override</summary>
-                    <p className="text-fgdim text-xs mt-2">Override the global poll interval for this creator. 0 / empty clears the override.</p>
-                    <form
-                        className="flex gap-2 mt-2"
-                        onSubmit={(e) => { e.preventDefault(); cadenceMutation.mutate() }}
-                    >
-                        <input
-                            type="number"
-                            min={0}
-                            max={168}
-                            placeholder="hours"
-                            className="input max-w-[10rem]"
-                            value={pollHours}
-                            onChange={(e) => setPollHours(e.target.value)}
-                        />
-                        <button type="submit" className="btn">Save</button>
-                    </form>
+                    <summary className="text-fgdim text-sm cursor-pointer">Per-creator settings</summary>
+                    <div className="mt-3 space-y-4">
+                        <div>
+                            <label className="block text-fgdim text-xs">Ingest mode</label>
+                            {c && (
+                                <ModePicker
+                                    label=""
+                                    value={(c.ingest_mode ?? 'full') as IngestMode}
+                                    onChange={(m) => modeMutation.mutate(m)}
+                                />
+                            )}
+                            <p className="text-fgdim text-xs mt-1">Full = download videos. Preview = caption + thumbnail only; download on demand from a card.</p>
+                        </div>
+
+                        <div>
+                            <label className="block text-fgdim text-xs">Polling cadence override (hours)</label>
+                            <form className="flex gap-2 mt-1" onSubmit={(e) => { e.preventDefault(); cadenceMutation.mutate() }}>
+                                <input type="number" min={0} max={168} placeholder="hours (empty = use default)" className="input max-w-[14rem]" value={pollHours} onChange={(e) => setPollHours(e.target.value)} />
+                                <button type="submit" className="btn">Save</button>
+                            </form>
+                        </div>
+
+                        <div>
+                            <label className="block text-fgdim text-xs">TTL override (days)</label>
+                            <form className="flex gap-2 mt-1" onSubmit={(e) => { e.preventDefault(); ttlMutation.mutate() }}>
+                                <input type="number" min={0} max={3650} placeholder="days (empty = use global)" className="input max-w-[14rem]" value={ttlOverride} onChange={(e) => setTTLOverride(e.target.value)} />
+                                <button type="submit" className="btn">Save</button>
+                            </form>
+                            <p className="text-fgdim text-xs mt-1">Shorter for noisy creators (e.g. 3 days), longer for ones you save from often. Empty / 0 inherits the global TTL.</p>
+                        </div>
+                    </div>
                 </details>
             </section>
 

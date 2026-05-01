@@ -46,6 +46,7 @@ function stateBadgeClass(state: Video['state']) {
     if (state === 'saved') return 'badge-saved'
     if (state === 'archived') return 'badge-archived'
     if (state === 'pending_deletion') return 'badge-pending'
+    if (state === 'preview') return 'bg-accent text-[#0b1220]'
     return ''
 }
 

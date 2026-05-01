@@ -2,6 +2,8 @@
 // API changes. (A future build step could codegen these from Go; for now,
 // hand-maintained is fine for the surface we have.)
 
+export type IngestMode = 'full' | 'preview'
+
 export interface Creator {
     id: number
     handle: string
@@ -10,9 +12,11 @@ export interface Creator {
     added_at: number
     last_fetched_at?: number
     top_tags?: string[]
+    ingest_mode?: IngestMode
+    ttl_days_override?: number
 }
 
-export type VideoState = 'active' | 'saved' | 'pending_deletion' | 'archived'
+export type VideoState = 'active' | 'saved' | 'pending_deletion' | 'archived' | 'preview'
 
 export interface Video {
     id: number

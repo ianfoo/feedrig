@@ -59,6 +59,62 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/pending", s.apiPendingList)
 	mux.HandleFunc("POST /api/v1/videos/{id}/restore", s.apiRestoreVideo)
 	mux.HandleFunc("POST /api/v1/videos/{id}/redownload", s.apiRedownloadVideo)
+	mux.HandleFunc("POST /api/v1/videos/{id}/download", s.apiPromoteVideo)
+	mux.HandleFunc("POST /api/v1/creators/{id}/mode", s.apiCreatorMode)
+	mux.HandleFunc("POST /api/v1/creators/{id}/ttl", s.apiCreatorTTL)
+}
+
+func (s *Server) apiPromoteVideo(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	v, err := s.videos.Get(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	go func() {
+		if err := s.ingest.Promote(s.backgroundCtx(), v); err != nil {
+			s.log.Warn("api promote", "video_id", id, "err", err)
+		}
+	}()
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *Server) apiCreatorMode(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := s.creators.SetIngestMode(r.Context(), id, parseIngestMode(body.Mode)); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) apiCreatorTTL(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var body struct {
+		TTLDays int `json:"ttl_days"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := s.creators.SetTTLDaysOverride(r.Context(), id, body.TTLDays); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) apiStats(w http.ResponseWriter, r *http.Request) {
@@ -218,13 +274,14 @@ func (s *Server) apiCreatorCadence(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiBulkAddCreators(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		List string `json:"list"`
+		List       string `json:"list"`
+		IngestMode string `json:"ingest_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	res := s.creators.BulkAdd(r.Context(), body.List)
+	res := s.creators.BulkAdd(r.Context(), body.List, parseIngestMode(body.IngestMode))
 	if len(res.Added) > 0 {
 		s.reload()
 	}
@@ -441,21 +498,25 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 // ---- DTOs ----
 
 type creatorDTO struct {
-	ID            int64  `json:"id"`
-	Handle        string `json:"handle"`
-	DisplayName   string `json:"display_name,omitempty"`
-	ProfileURL    string `json:"profile_url"`
-	AddedAt       int64  `json:"added_at"`
-	LastFetchedAt int64  `json:"last_fetched_at,omitempty"`
+	ID              int64  `json:"id"`
+	Handle          string `json:"handle"`
+	DisplayName     string `json:"display_name,omitempty"`
+	ProfileURL      string `json:"profile_url"`
+	AddedAt         int64  `json:"added_at"`
+	LastFetchedAt   int64  `json:"last_fetched_at,omitempty"`
+	IngestMode      string `json:"ingest_mode"`
+	TTLDaysOverride int    `json:"ttl_days_override,omitempty"`
 }
 
 func toCreatorDTO(c creator.Creator) creatorDTO {
 	d := creatorDTO{
-		ID:          c.ID,
-		Handle:      c.Handle,
-		DisplayName: c.DisplayName,
-		ProfileURL:  c.ProfileURL,
-		AddedAt:     c.AddedAt.Unix(),
+		ID:              c.ID,
+		Handle:          c.Handle,
+		DisplayName:     c.DisplayName,
+		ProfileURL:      c.ProfileURL,
+		AddedAt:         c.AddedAt.Unix(),
+		IngestMode:      string(c.IngestMode),
+		TTLDaysOverride: c.TTLDaysOverride,
 	}
 	if c.LastFetchedAt != nil {
 		d.LastFetchedAt = c.LastFetchedAt.Unix()
@@ -547,12 +608,13 @@ func (s *Server) apiAddCreator(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Handle      string `json:"handle"`
 		DisplayName string `json:"display_name"`
+		IngestMode  string `json:"ingest_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	c, err := s.creators.Add(r.Context(), body.Handle, body.DisplayName)
+	c, err := s.creators.Add(r.Context(), body.Handle, body.DisplayName, parseIngestMode(body.IngestMode))
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, creator.ErrExists) {

@@ -108,6 +108,7 @@ func main() {
 		ingest.YtDlpDownloader{Binary: *ytdlpBin, CookieFile: *cookies},
 		creators, videos, mediaAbs, log,
 	)
+	ingestSvc.SetPreviewer(ingest.YtDlpPreviewer{Binary: *ytdlpBin, CookieFile: *cookies})
 
 	enrichStore := enrich.NewStore(conn)
 	worker := &enrich.Worker{
@@ -245,7 +246,7 @@ func runPoll() {
 		}
 	}
 	if c == nil {
-		newC, err := creators.Add(context.Background(), handle, "")
+		newC, err := creators.Add(context.Background(), handle, "", creator.IngestFull)
 		if err != nil {
 			log.Error("add creator", "err", err); os.Exit(1)
 		}

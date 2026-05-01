@@ -25,6 +25,11 @@ export default function VideoPage() {
         onSuccess: () => navigate(-1),
     })
 
+    const promoteMutation = useMutation({
+        mutationFn: () => api.promoteVideo(videoID),
+        onSuccess: () => qc.invalidateQueries({ queryKey: ['video', videoID] }),
+    })
+
     const videoRef = useRef<HTMLVideoElement>(null)
     const [speed, setSpeed] = useState(1)
     const lastSentRef = useRef(0)
@@ -115,10 +120,21 @@ export default function VideoPage() {
     if (!data) return null
     const v = data
 
+    // For preview-state videos, derive an Instagram embed URL from the post
+    // shortcode. /embed/captioned/ renders a media-only iframe IG provides
+    // for public posts (no login wall on most). The user gets to watch
+    // without us having to download. They can still click "Download" below
+    // to promote to a full local copy with scrub + speed controls.
+    const igEmbedURL = v.state === 'preview'
+        ? `https://www.instagram.com/p/${v.external_id}/embed/captioned/`
+        : ''
+
     return (
         <div className="space-y-3">
             {v.state === 'archived' ? (
                 <ArchivedShell video={v} />
+            ) : v.state === 'preview' ? (
+                <PreviewShell video={v} igEmbedURL={igEmbedURL} promoting={promoteMutation.isPending} onPromote={() => promoteMutation.mutate()} />
             ) : (
                 <video
                     ref={videoRef}
@@ -214,6 +230,36 @@ function badgeClass(state: string) {
     if (state === 'archived') return 'badge-archived'
     if (state === 'pending_deletion') return 'badge-pending'
     return ''
+}
+
+function PreviewShell({ video, igEmbedURL, promoting, onPromote }: {
+    video: { thumbnail_url?: string; id: number; title?: string }
+    igEmbedURL: string
+    promoting: boolean
+    onPromote: () => void
+}) {
+    return (
+        <div className="space-y-3">
+            <div className="rounded-xl overflow-hidden border border-border bg-panel2">
+                <iframe
+                    src={igEmbedURL}
+                    title={video.title || 'Instagram post'}
+                    className="w-full bg-black"
+                    style={{ aspectRatio: '4 / 5', minHeight: '500px', border: 0 }}
+                    allow="encrypted-media"
+                    loading="lazy"
+                />
+            </div>
+            <div className="panel">
+                <p className="text-fgdim text-sm">
+                    Watching the embedded Instagram view (no scrub or speed controls). Download the video locally to unlock those.
+                </p>
+                <div className="flex gap-2 mt-3">
+                    <button className="btn btn-primary" onClick={onPromote} disabled={promoting}>{promoting ? 'Downloading…' : 'Download video'}</button>
+                </div>
+            </div>
+        </div>
+    )
 }
 
 function ArchivedShell({ video }: { video: { thumbnail_url?: string; id: number } }) {

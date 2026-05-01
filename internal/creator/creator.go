@@ -13,6 +13,20 @@ import (
 // Creator is the domain type. Optional fields use the empty string or a nil
 // time.Time pointer to signal absence; SQL nullables are confined to the
 // store implementation. (ADR-012.)
+// IngestMode controls what gets fetched for a creator's posts.
+//
+//   - IngestFull (default): yt-dlp downloads the media file; full transcribe +
+//     summarize. The video file lives on disk until the TTL sweeper reaps it.
+//   - IngestPreview: only the post's metadata + thumbnail are fetched. Stored
+//     as state='preview'; the user can browse cards and either promote to a
+//     full download or open the IG embed iframe to watch in-place.
+type IngestMode string
+
+const (
+	IngestFull    IngestMode = "full"
+	IngestPreview IngestMode = "preview"
+)
+
 type Creator struct {
 	ID                  int64
 	Handle              string
@@ -22,6 +36,8 @@ type Creator struct {
 	LastFetchedAt       *time.Time // nil = never fetched
 	PollIntervalSeconds int64      // 0 = use global default
 	FollowedAt          *time.Time // nil = unknown (e.g. manually added)
+	IngestMode          IngestMode // 'full' or 'preview'
+	TTLDaysOverride     int        // 0 = inherit global ttl_days
 }
 
 // Followed reports whether the creator has a known follow timestamp.
@@ -49,11 +65,15 @@ func NewStore(db *sql.DB) *Store {
 }
 
 // Add inserts a creator from a raw input. The input may be a bare handle
-// ("@natgeo", "natgeo") or a full instagram.com URL. Duplicates return ErrExists.
-func (s *Store) Add(ctx context.Context, input, displayName string) (*Creator, error) {
+// ("@natgeo", "natgeo") or a full instagram.com URL. Duplicates return
+// ErrExists. mode defaults to IngestFull when empty.
+func (s *Store) Add(ctx context.Context, input, displayName string, mode IngestMode) (*Creator, error) {
 	handle, profileURL, err := parseInput(input)
 	if err != nil {
 		return nil, err
+	}
+	if mode == "" {
+		mode = IngestFull
 	}
 	now := time.Now().Unix()
 
@@ -64,8 +84,8 @@ func (s *Store) Add(ctx context.Context, input, displayName string) (*Creator, e
 	}
 
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO creators(handle, display_name, profile_url, added_at) VALUES(?, ?, ?, ?)`,
-		handle, dn, profileURL, now,
+		`INSERT INTO creators(handle, display_name, profile_url, added_at, ingest_mode) VALUES(?, ?, ?, ?, ?)`,
+		handle, dn, profileURL, now, string(mode),
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -80,7 +100,27 @@ func (s *Store) Add(ctx context.Context, input, displayName string) (*Creator, e
 		DisplayName: displayName,
 		ProfileURL:  profileURL,
 		AddedAt:     time.Unix(now, 0),
+		IngestMode:  mode,
 	}, nil
+}
+
+// SetIngestMode flips a creator between full and preview modes.
+func (s *Store) SetIngestMode(ctx context.Context, id int64, mode IngestMode) error {
+	if mode != IngestFull && mode != IngestPreview {
+		return fmt.Errorf("invalid ingest mode %q", mode)
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE creators SET ingest_mode = ? WHERE id = ?`, string(mode), id)
+	return err
+}
+
+// SetTTLDaysOverride: 0 (or negative) clears the override.
+func (s *Store) SetTTLDaysOverride(ctx context.Context, id int64, days int) error {
+	if days <= 0 {
+		_, err := s.db.ExecContext(ctx, `UPDATE creators SET ttl_days_override = NULL WHERE id = ?`, id)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE creators SET ttl_days_override = ? WHERE id = ?`, days, id)
+	return err
 }
 
 type SortOrder string
@@ -177,22 +217,22 @@ type BulkFailure struct {
 }
 
 // BulkAdd parses the input string as one-handle-per-line, ignores blank
-// lines and lines starting with '#', and adds each.
-func (s *Store) BulkAdd(ctx context.Context, raw string) BulkAddResult {
+// lines and lines starting with '#'. defaultMode applies to every line; an
+// individual line can override with the syntax "handle, Display, mode" or
+// "handle | mode" — the third comma-separated field, or anything after a
+// pipe, is treated as the mode if it parses to "full" or "preview".
+func (s *Store) BulkAdd(ctx context.Context, raw string, defaultMode IngestMode) BulkAddResult {
+	if defaultMode == "" {
+		defaultMode = IngestFull
+	}
 	var res BulkAddResult
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		var handle, display string
-		if i := strings.Index(line, ","); i >= 0 {
-			handle = strings.TrimSpace(line[:i])
-			display = strings.TrimSpace(line[i+1:])
-		} else {
-			handle = line
-		}
-		c, err := s.Add(ctx, handle, display)
+		handle, display, mode := parseBulkLine(line, defaultMode)
+		c, err := s.Add(ctx, handle, display, mode)
 		if err != nil {
 			if errors.Is(err, ErrExists) {
 				res.Skipped = append(res.Skipped, handle)
@@ -206,15 +246,54 @@ func (s *Store) BulkAdd(ctx context.Context, raw string) BulkAddResult {
 	return res
 }
 
+// parseBulkLine extracts (handle, display, mode) from a freeform input.
+// Supported shapes:
+//
+//	natgeo
+//	natgeo, National Geographic
+//	natgeo, National Geographic, preview
+//	natgeo | preview
+func parseBulkLine(line string, defaultMode IngestMode) (handle, display string, mode IngestMode) {
+	mode = defaultMode
+	// Pipe-style override.
+	if i := strings.LastIndex(line, "|"); i >= 0 {
+		tail := strings.TrimSpace(line[i+1:])
+		if m := IngestMode(strings.ToLower(tail)); m == IngestFull || m == IngestPreview {
+			mode = m
+			line = strings.TrimSpace(line[:i])
+		}
+	}
+	parts := strings.Split(line, ",")
+	for j, p := range parts {
+		parts[j] = strings.TrimSpace(p)
+	}
+	switch len(parts) {
+	case 1:
+		handle = parts[0]
+	case 2:
+		handle, display = parts[0], parts[1]
+	default:
+		handle, display = parts[0], parts[1]
+		if m := IngestMode(strings.ToLower(parts[2])); m == IngestFull || m == IngestPreview {
+			mode = m
+		}
+	}
+	return
+}
+
 // ImportEntry is one record from an Instagram data-export following.json.
 type ImportEntry struct {
 	Handle     string
 	FollowedAt time.Time // zero if unknown
 }
 
-// ImportFollowing inserts (or upserts the followed_at on existing rows)
-// each entry. Returns counts.
-func (s *Store) ImportFollowing(ctx context.Context, entries []ImportEntry) (added, updated int, failures []BulkFailure) {
+// ImportFollowing inserts (or upserts followed_at on existing rows) each
+// entry. Newly-inserted rows get defaultMode; existing rows' modes are
+// untouched (the user may have already adjusted them).
+func (s *Store) ImportFollowing(ctx context.Context, entries []ImportEntry, defaultMode IngestMode) (added, updated int, failures []BulkFailure) {
+	if defaultMode == "" {
+		defaultMode = IngestFull
+	}
 	for _, e := range entries {
 		handle := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(e.Handle, "@")))
 		if handle == "" {
@@ -227,9 +306,10 @@ func (s *Store) ImportFollowing(ctx context.Context, entries []ImportEntry) (add
 		}
 		now := time.Now().Unix()
 		res, err := s.db.ExecContext(ctx, `
-			INSERT INTO creators(handle, profile_url, added_at, followed_at) VALUES(?, ?, ?, ?)
+			INSERT INTO creators(handle, profile_url, added_at, followed_at, ingest_mode)
+			VALUES(?, ?, ?, ?, ?)
 			ON CONFLICT(handle) DO UPDATE SET followed_at = COALESCE(excluded.followed_at, creators.followed_at)
-		`, handle, profileURL, now, followedAt)
+		`, handle, profileURL, now, followedAt, string(defaultMode))
 		if err != nil {
 			failures = append(failures, BulkFailure{Input: handle, Err: err.Error()})
 			continue
@@ -254,7 +334,7 @@ var (
 
 // --- internal scan/parse helpers ---
 
-const selectCols = `SELECT id, handle, display_name, profile_url, added_at, last_fetched_at, poll_interval_seconds, followed_at FROM creators`
+const selectCols = `SELECT id, handle, display_name, profile_url, added_at, last_fetched_at, poll_interval_seconds, followed_at, ingest_mode, ttl_days_override FROM creators`
 
 type scanner interface {
 	Scan(...any) error
@@ -264,10 +344,10 @@ type scanner interface {
 // SQL fields are translated at the seam.
 func scanCreator(s scanner) (*Creator, error) {
 	var c Creator
-	var displayName sql.NullString
+	var displayName, ingestMode sql.NullString
 	var added int64
-	var lastFetched, followedAt, pollInterval sql.NullInt64
-	if err := s.Scan(&c.ID, &c.Handle, &displayName, &c.ProfileURL, &added, &lastFetched, &pollInterval, &followedAt); err != nil {
+	var lastFetched, followedAt, pollInterval, ttlOverride sql.NullInt64
+	if err := s.Scan(&c.ID, &c.Handle, &displayName, &c.ProfileURL, &added, &lastFetched, &pollInterval, &followedAt, &ingestMode, &ttlOverride); err != nil {
 		return nil, err
 	}
 	c.AddedAt = time.Unix(added, 0)
@@ -284,6 +364,13 @@ func scanCreator(s scanner) (*Creator, error) {
 	}
 	if pollInterval.Valid {
 		c.PollIntervalSeconds = pollInterval.Int64
+	}
+	c.IngestMode = IngestFull
+	if ingestMode.Valid && ingestMode.String == string(IngestPreview) {
+		c.IngestMode = IngestPreview
+	}
+	if ttlOverride.Valid {
+		c.TTLDaysOverride = int(ttlOverride.Int64)
 	}
 	return &c, nil
 }

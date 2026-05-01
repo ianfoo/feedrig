@@ -62,17 +62,26 @@ func (s *Sweeper) sweep(ctx context.Context) {
 }
 
 // SweepOnce performs a single sweep pass and returns counts.
+//
+// Per-creator TTL override: when creators.ttl_days_override is non-null, it
+// replaces the global ttl_days for that creator's videos. Implemented as
+// SQL-side COALESCE so a single UPDATE handles both paths.
 func (s *Sweeper) SweepOnce(ctx context.Context) (SweepResult, error) {
 	var res SweepResult
 	ttl, grace := s.Settings.TTL(ctx)
 	now := time.Now()
+	globalTTLSeconds := int64(ttl.Seconds())
 
-	// 1) age active → pending_deletion when downloaded_at older than ttl.
-	cutoff := now.Add(-ttl).Unix()
+	// 1) age active → pending_deletion when downloaded_at older than the
+	//    effective TTL (creator override falling back to global).
 	r, err := s.DB.ExecContext(ctx, `
 		UPDATE videos SET state = 'pending_deletion', state_changed_at = ?
-		WHERE state = 'active' AND downloaded_at < ?
-	`, now.Unix(), cutoff)
+		WHERE state = 'active'
+		  AND downloaded_at < ? - (
+		    SELECT COALESCE(c.ttl_days_override * 86400, ?)
+		    FROM creators c WHERE c.id = videos.creator_id
+		  )
+	`, now.Unix(), now.Unix(), globalTTLSeconds)
 	if err != nil {
 		return res, err
 	}

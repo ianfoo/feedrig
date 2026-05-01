@@ -315,7 +315,8 @@ func (s *Server) addCreator(w http.ResponseWriter, r *http.Request) {
 		s.userError(w, "invalid form")
 		return
 	}
-	c, err := s.creators.Add(r.Context(), r.FormValue("handle"), r.FormValue("display_name"))
+	mode := parseIngestMode(r.FormValue("ingest_mode"))
+	c, err := s.creators.Add(r.Context(), r.FormValue("handle"), r.FormValue("display_name"), mode)
 	if err != nil {
 		http.Redirect(w, r, "/creators?err="+escape(err.Error()), http.StatusFound)
 		return
@@ -351,7 +352,7 @@ func (s *Server) bulkAddCreators(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/creators?err=No+list+provided", http.StatusFound)
 		return
 	}
-	res := s.creators.BulkAdd(r.Context(), content)
+	res := s.creators.BulkAdd(r.Context(), content, parseIngestMode(r.FormValue("ingest_mode")))
 	if len(res.Added) > 0 {
 		s.reload()
 	}
@@ -418,7 +419,7 @@ func (s *Server) importFollowing(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/creators?err="+escape("Parse failed: "+err.Error()), http.StatusFound)
 		return
 	}
-	added, updated, failures := s.creators.ImportFollowing(r.Context(), entries)
+	added, updated, failures := s.creators.ImportFollowing(r.Context(), entries, parseIngestMode(r.FormValue("ingest_mode")))
 	if added > 0 {
 		s.reload()
 	}
@@ -1145,6 +1146,17 @@ func (s *Server) groupSetMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/groups/"+g.Slug+"/edit?flash=Members+updated", http.StatusFound)
+}
+
+// parseIngestMode normalizes a freeform mode string to creator.IngestMode.
+// Empty / unknown defaults to IngestFull.
+func parseIngestMode(s string) creator.IngestMode {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "preview":
+		return creator.IngestPreview
+	default:
+		return creator.IngestFull
+	}
 }
 
 func splitCSVField(s string) []string {

@@ -2,6 +2,8 @@ import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import ModePicker from '../components/ModePicker'
+import type { IngestMode } from '../types'
 
 export default function Creators() {
     const qc = useQueryClient()
@@ -13,9 +15,10 @@ export default function Creators() {
     const [filter, setFilter] = useState('')
     const [handle, setHandle] = useState('')
     const [displayName, setDisplayName] = useState('')
+    const [ingestMode, setIngestMode] = useState<'full' | 'preview'>('full')
 
     const addMutation = useMutation({
-        mutationFn: () => api.addCreator(handle, displayName || undefined),
+        mutationFn: () => api.addCreator(handle, displayName || undefined, ingestMode),
         onSuccess: () => {
             setHandle('')
             setDisplayName('')
@@ -34,6 +37,7 @@ export default function Creators() {
     })
 
     const [bulkText, setBulkText] = useState('')
+    const [bulkMode, setBulkMode] = useState<IngestMode>('full')
     const bulkFileRef = useRef<HTMLInputElement>(null)
     const bulkMutation = useMutation({
         mutationFn: async () => {
@@ -42,7 +46,7 @@ export default function Creators() {
             if (f) {
                 combined = (combined ? combined + '\n' : '') + (await f.text())
             }
-            return api.bulkAddCreators(combined)
+            return api.bulkAddCreatorsWithMode(combined, bulkMode)
         },
         onSuccess: () => {
             setBulkText('')
@@ -82,12 +86,15 @@ export default function Creators() {
             <section className="panel">
                 <h1 className="text-xl font-semibold mb-2">Creators</h1>
                 <form
-                    className="flex flex-col sm:flex-row gap-2"
                     onSubmit={(e) => { e.preventDefault(); if (handle.trim()) addMutation.mutate() }}
+                    className="space-y-2"
                 >
-                    <input className="input" placeholder="instagram handle or URL" value={handle} onChange={(e) => setHandle(e.target.value)} required />
-                    <input className="input sm:max-w-xs" placeholder="display name (optional)" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-                    <button className="btn btn-primary" type="submit" disabled={addMutation.isPending}>Add</button>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                        <input className="input" placeholder="instagram handle or URL" value={handle} onChange={(e) => setHandle(e.target.value)} required />
+                        <input className="input sm:max-w-xs" placeholder="display name (optional)" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+                        <button className="btn btn-primary" type="submit" disabled={addMutation.isPending}>Add</button>
+                    </div>
+                    <ModePicker value={ingestMode} onChange={setIngestMode} />
                 </form>
                 {addMutation.error && <p className="text-danger text-sm mt-2">{(addMutation.error as Error).message}</p>}
 
@@ -99,8 +106,9 @@ export default function Creators() {
                             rows={5}
                             value={bulkText}
                             onChange={(e) => setBulkText(e.target.value)}
-                            placeholder={`One per line. Optionally "handle, Display Name". Comments start with #.\nnatgeo, National Geographic\nsamhowell\n# bass guitar:\nariadixongotbass`}
+                            placeholder={`One per line. Optionally "handle, Display Name" or "handle | preview" to override mode per-line.\nnatgeo, National Geographic\nsamhowell | preview\n# bass guitar:\nariadixongotbass`}
                         />
+                        <ModePicker value={bulkMode} onChange={setBulkMode} label="Default mode" />
                         <div className="flex gap-2 items-center flex-wrap">
                             <input ref={bulkFileRef} type="file" accept=".txt,.csv,text/plain,text/csv" className="text-xs text-fgdim" />
                             <button type="submit" className="btn btn-primary" disabled={bulkMutation.isPending}>Add all</button>

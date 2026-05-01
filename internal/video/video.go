@@ -19,6 +19,11 @@ const (
 	// (title, description, summary, transcript, tags, thumbnail) is kept
 	// indefinitely. Re-watchable via redownload from the original URL.
 	StateArchived State = "archived"
+	// StatePreview: only metadata + thumbnail were fetched; the user
+	// hasn't asked for the full media file yet. The "lightweight" mode
+	// for creators flagged ingest_mode='preview'. Promote with
+	// /videos/{id}/download.
+	StatePreview State = "preview"
 )
 
 // Video is the domain type. Optional strings use empty-string-is-unset; an
@@ -70,9 +75,14 @@ type Store struct{ db *sql.DB }
 func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 
 // Insert persists a freshly-downloaded video. Returns the new ID, or
-// ErrDuplicate if (creator_id, external_id) already exists.
+// ErrDuplicate if (creator_id, external_id) already exists. The caller may
+// preset v.State (e.g. StatePreview); empty defaults to StateActive.
 func (s *Store) Insert(ctx context.Context, v *Video) (int64, error) {
 	now := time.Now().Unix()
+	state := v.State
+	if state == "" {
+		state = StateActive
+	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO videos(
 			creator_id, external_id, url, title, description,
@@ -83,7 +93,7 @@ func (s *Store) Insert(ctx context.Context, v *Video) (int64, error) {
 		v.CreatorID, v.ExternalID, v.URL,
 		nullableString(v.Title), nullableString(v.Description),
 		nullableInt64(v.DurationSeconds), nullableUnix(v.PostedAt), now, v.FilePath,
-		nullableString(v.ThumbnailPath), string(StateActive), now,
+		nullableString(v.ThumbnailPath), string(state), now,
 	)
 	if err != nil {
 		if isUnique(err) {

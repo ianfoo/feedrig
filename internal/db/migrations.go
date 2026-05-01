@@ -44,6 +44,20 @@ var migrations = []string{
 	// by the data-export following.json import; null for manually-added
 	// creators (we use added_at for those).
 	`ALTER TABLE creators ADD COLUMN followed_at INTEGER;`,
+	// 5 (v0.7+): per-creator ingest mode + per-creator TTL override.
+	//
+	// ingest_mode = 'full' (default): the existing path — yt-dlp downloads
+	// the media file, transcribe + summarize as usual.
+	// ingest_mode = 'preview': fetch only metadata + thumbnail; the row
+	// lives at state='preview' until the user explicitly promotes it to a
+	// full download. Storage cost approaches zero per-post; user trades
+	// scrub/speed for browsing breadth.
+	//
+	// ttl_days_override: when non-null, replaces the global ttl_days for
+	// this creator's videos. Useful: aggressive expiry on noisy creators,
+	// long expiry on the few you actually save from. Null = inherit.
+	`ALTER TABLE creators ADD COLUMN ingest_mode TEXT NOT NULL DEFAULT 'full';
+	 ALTER TABLE creators ADD COLUMN ttl_days_override INTEGER;`,
 }
 
 func applyMigrations(conn *sql.DB) error {
