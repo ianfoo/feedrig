@@ -45,6 +45,8 @@ func (p YtDlpPreviewer) Download(ctx context.Context, postURL, outDir string) (*
 		"--write-info-json",
 		"--write-thumbnail",
 		"--convert-thumbnails", "jpg",
+		"--write-comments",
+		"--extractor-args", fmt.Sprintf("instagram:max_comments=%d", MaxComments),
 		"--restrict-filenames",
 		"-o", "%(id)s.%(ext)s",
 		"-P", outDir,
@@ -90,6 +92,17 @@ func (p YtDlpPreviewer) Download(ctx context.Context, postURL, outDir string) (*
 		}
 	}
 
+	comments := make([]DownloadedComment, 0, len(info.Comments))
+	for i, c := range info.Comments {
+		if i >= MaxComments {
+			break
+		}
+		if c.Text == "" {
+			continue
+		}
+		comments = append(comments, c.toDownloaded())
+	}
+
 	return &DownloadResult{
 		ExternalID:      shortcode,
 		URL:             postURL,
@@ -99,6 +112,7 @@ func (p YtDlpPreviewer) Download(ctx context.Context, postURL, outDir string) (*
 		PostedAt:        info.posted(),
 		FilePath:        "", // preview-only: no media file
 		ThumbnailPath:   thumb,
+		Comments:        comments,
 	}, nil
 }
 

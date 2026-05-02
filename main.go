@@ -109,6 +109,7 @@ func main() {
 		creators, videos, mediaAbs, log,
 	)
 	ingestSvc.SetPreviewer(ingest.YtDlpPreviewer{Binary: *ytdlpBin, CookieFile: *cookies})
+	ingestSvc.SetCommentSink(&enrich.CommentSinkAdapter{Store: enrich.NewStore(conn)})
 
 	enrichStore := enrich.NewStore(conn)
 	worker := &enrich.Worker{

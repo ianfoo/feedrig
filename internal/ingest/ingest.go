@@ -35,12 +35,28 @@ type DownloadResult struct {
 	PostedAt        time.Time
 	FilePath        string // absolute path on disk
 	ThumbnailPath   string // absolute path on disk, if any
+	Comments        []DownloadedComment
+}
+
+// DownloadedComment is the raw yt-dlp comment shape, decoupled from the
+// enrich.Comment store type. Persistence layer adapts.
+type DownloadedComment struct {
+	Author   string
+	Text     string
+	Likes    int64
+	PostedAt time.Time
 }
 
 // Enricher is the small surface ingest needs from the enrichment worker.
 // Defined locally to avoid an import cycle with internal/enrich.
 type Enricher interface {
 	Enqueue(videoID int64)
+}
+
+// CommentSink persists a video's comment list. Defined locally for the
+// same reason — wiring is via SetCommentSink from main.
+type CommentSink interface {
+	ReplaceComments(ctx context.Context, videoID int64, comments []DownloadedComment) error
 }
 
 // Service orchestrates discovery + download + persistence.
@@ -51,6 +67,7 @@ type Service struct {
 	creators  *creator.Store
 	videos    *video.Store
 	enricher  Enricher
+	comments  CommentSink
 	mediaRoot string
 	log       *slog.Logger
 
@@ -70,6 +87,11 @@ func NewService(disc Discoverer, dl Downloader, creators *creator.Store, videos 
 // ingest_mode is 'preview'. Optional: without it, preview-mode creators
 // silently fall back to the full downloader.
 func (s *Service) SetPreviewer(p Downloader) { s.preview = p }
+
+// SetCommentSink wires the persistence target for per-post comments.
+// Optional; without it, comments are dropped on the floor (downloaders
+// still fetch them since the cost is negligible).
+func (s *Service) SetCommentSink(c CommentSink) { s.comments = c }
 
 // IsFetching reports whether a fetch is currently in flight for the given
 // creator. Web layer surfaces this in the UI; scheduler skips on `true`.
@@ -240,6 +262,16 @@ func (s *Service) fetchURL(ctx context.Context, c *creator.Creator, url string) 
 		return nil, fmt.Errorf("persist: %w", err)
 	}
 	v.ID = id
+
+	// Persist comments if any came back (capped at MaxComments per
+	// downloader). Best-effort: a comment-store failure isn't fatal —
+	// the video's still saved.
+	if s.comments != nil && len(res.Comments) > 0 {
+		if err := s.comments.ReplaceComments(ctx, id, res.Comments); err != nil {
+			s.log.Warn("save comments", "video_id", id, "err", err)
+		}
+	}
+
 	// Don't transcribe / summarize previews — there's no media file to
 	// transcribe, and summarizing the IG caption alone produces low-value
 	// output. Enrichment kicks in on promote.

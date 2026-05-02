@@ -58,6 +58,20 @@ var migrations = []string{
 	// long expiry on the few you actually save from. Null = inherit.
 	`ALTER TABLE creators ADD COLUMN ingest_mode TEXT NOT NULL DEFAULT 'full';
 	 ALTER TABLE creators ADD COLUMN ttl_days_override INTEGER;`,
+	// 6 (v0.10.x): top-N comments per video. Capped at fetch time
+	// (yt-dlp --max-comments) so we never store thousands. Position
+	// preserves yt-dlp's order (which on Instagram approximates "top").
+	`CREATE TABLE video_comments (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		video_id   INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+		author     TEXT,
+		text       TEXT    NOT NULL,
+		likes      INTEGER NOT NULL DEFAULT 0,
+		posted_at  INTEGER,
+		position   INTEGER NOT NULL DEFAULT 0,
+		fetched_at INTEGER NOT NULL
+	);
+	CREATE INDEX idx_video_comments_video ON video_comments(video_id, position);`,
 }
 
 func applyMigrations(conn *sql.DB) error {

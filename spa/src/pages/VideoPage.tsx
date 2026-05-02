@@ -206,6 +206,23 @@ export default function VideoPage() {
                         <p className="whitespace-pre-wrap mt-2 text-sm leading-relaxed">{v.transcript}</p>
                     </details>
                 )}
+                {v.comments && v.comments.length > 0 && (
+                    <details className="mt-3" open>
+                        <summary className="text-fgdim text-sm cursor-pointer">Top comments ({v.comments.length})</summary>
+                        <ul className="mt-2 divide-y divide-border">
+                            {v.comments.map((c, i) => (
+                                <li key={i} className="py-2">
+                                    <div className="flex gap-2 items-baseline text-xs text-fgdim flex-wrap">
+                                        {c.author && <span className="font-semibold text-fg">@{c.author}</span>}
+                                        {c.likes ? <span className="text-accent">♥ {c.likes}</span> : null}
+                                        {c.posted_at ? <span>{new Date(c.posted_at * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span> : null}
+                                    </div>
+                                    <p className="whitespace-pre-wrap text-sm mt-1 leading-relaxed">{c.text}</p>
+                                </li>
+                            ))}
+                        </ul>
+                    </details>
+                )}
                 {v.description && (
                     <details className="mt-3">
                         <summary className="text-fgdim text-sm cursor-pointer">Original caption</summary>

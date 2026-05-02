@@ -31,6 +31,19 @@ type Tag struct {
 	Name string
 }
 
+// Comment is a single post comment kept alongside the video for context. We
+// cap the count at fetch time (yt-dlp --max-comments) so this table never
+// grows beyond ~10 rows per video.
+type Comment struct {
+	ID       int64
+	VideoID  int64
+	Author   string
+	Text     string
+	Likes    int64
+	PostedAt *time.Time
+	Position int
+}
+
 type State string
 
 const (
@@ -253,6 +266,61 @@ func (s *Store) PendingVideoIDs(ctx context.Context, includeFailed bool) ([]int6
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// ReplaceComments swaps the stored comments for a video. Atomically
+// deletes existing rows and inserts the new set so a re-fetch leaves no
+// stale entries behind.
+func (s *Store) ReplaceComments(ctx context.Context, videoID int64, comments []Comment) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM video_comments WHERE video_id = ?`, videoID); err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	for i, c := range comments {
+		var posted any
+		if c.PostedAt != nil && !c.PostedAt.IsZero() {
+			posted = c.PostedAt.Unix()
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO video_comments(video_id, author, text, likes, posted_at, position, fetched_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?)
+		`, videoID, nullableString(c.Author), c.Text, c.Likes, posted, i, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// CommentsForVideo returns comments in the stored order (position asc).
+func (s *Store) CommentsForVideo(ctx context.Context, videoID int64) ([]Comment, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, video_id, COALESCE(author,''), text, likes, posted_at, position
+		FROM video_comments WHERE video_id = ?
+		ORDER BY position
+	`, videoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Comment
+	for rows.Next() {
+		var c Comment
+		var posted sql.NullInt64
+		if err := rows.Scan(&c.ID, &c.VideoID, &c.Author, &c.Text, &c.Likes, &posted, &c.Position); err != nil {
+			return nil, err
+		}
+		if posted.Valid {
+			t := time.Unix(posted.Int64, 0)
+			c.PostedAt = &t
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 func nullableString(s string) any {

@@ -537,9 +537,17 @@ type videoDTO struct {
 	State           string   `json:"state"`
 	MediaURL        string   `json:"media_url"`
 	ThumbnailURL    string   `json:"thumbnail_url,omitempty"`
-	Tags            []string `json:"tags,omitempty"`
-	Summary         string   `json:"summary,omitempty"`
-	Transcript      string   `json:"transcript,omitempty"`
+	Tags            []string         `json:"tags,omitempty"`
+	Summary         string           `json:"summary,omitempty"`
+	Transcript      string           `json:"transcript,omitempty"`
+	Comments        []apiCommentDTO  `json:"comments,omitempty"`
+}
+
+type apiCommentDTO struct {
+	Author   string `json:"author,omitempty"`
+	Text     string `json:"text"`
+	Likes    int64  `json:"likes,omitempty"`
+	PostedAt int64  `json:"posted_at,omitempty"`
 }
 
 func (s *Server) toVideoDTO(v video.Video) videoDTO {
@@ -666,6 +674,16 @@ func (s *Server) apiGetVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	if t, _ := s.enrich.GetTranscript(r.Context(), v.ID); t != nil {
 		d.Transcript = t.Text
+	}
+	if comments, _ := s.enrich.CommentsForVideo(r.Context(), v.ID); len(comments) > 0 {
+		d.Comments = make([]apiCommentDTO, len(comments))
+		for i, c := range comments {
+			cd := apiCommentDTO{Author: c.Author, Text: c.Text, Likes: c.Likes}
+			if c.PostedAt != nil {
+				cd.PostedAt = c.PostedAt.Unix()
+			}
+			d.Comments[i] = cd
+		}
 	}
 	writeJSON(w, http.StatusOK, d)
 }

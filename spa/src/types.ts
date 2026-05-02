@@ -34,6 +34,14 @@ export interface Video {
     tags?: string[]
     summary?: string
     transcript?: string
+    comments?: VideoComment[]
+}
+
+export interface VideoComment {
+    author?: string
+    text: string
+    likes?: number
+    posted_at?: number
 }
 
 export interface Group {

@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+// MaxComments caps how many comments yt-dlp pulls per post. The user
+// flagged that some posts have thousands; capping here keeps the per-post
+// cost bounded while still surfacing the top discussion.
+const MaxComments = 10
+
 // YtDlpDownloader shells out to the yt-dlp CLI to fetch a single post.
 type YtDlpDownloader struct {
 	Binary     string // defaults to "yt-dlp"
@@ -53,6 +58,8 @@ func (d YtDlpDownloader) Download(ctx context.Context, postURL, outDir string) (
 		"--write-info-json",
 		"--write-thumbnail",
 		"--convert-thumbnails", "jpg",
+		"--write-comments",
+		"--extractor-args", fmt.Sprintf("instagram:max_comments=%d", MaxComments),
 		"--restrict-filenames",
 		"-o", "%(id)s.%(ext)s",
 		"-P", outDir,
@@ -92,6 +99,17 @@ func (d YtDlpDownloader) Download(ctx context.Context, postURL, outDir string) (
 		thumb = ""
 	}
 
+	comments := make([]DownloadedComment, 0, len(info.Comments))
+	for i, c := range info.Comments {
+		if i >= MaxComments {
+			break
+		}
+		if c.Text == "" {
+			continue
+		}
+		comments = append(comments, c.toDownloaded())
+	}
+
 	return &DownloadResult{
 		ExternalID:      shortcode,
 		URL:             postURL,
@@ -101,6 +119,7 @@ func (d YtDlpDownloader) Download(ctx context.Context, postURL, outDir string) (
 		PostedAt:        info.posted(),
 		FilePath:        videoPath,
 		ThumbnailPath:   thumb,
+		Comments:        comments,
 	}, nil
 }
 
@@ -134,13 +153,41 @@ func firstNonEmpty(ss ...string) string {
 }
 
 type ytdlpInfo struct {
-	ID          string  `json:"id"`
-	Title       string  `json:"title"`
-	Fulltitle   string  `json:"fulltitle"`
-	Description string  `json:"description"`
-	Duration    float64 `json:"duration"`
-	UploadDate  string  `json:"upload_date"` // YYYYMMDD
-	Timestamp   int64   `json:"timestamp"`   // unix seconds, when present
+	ID          string         `json:"id"`
+	Title       string         `json:"title"`
+	Fulltitle   string         `json:"fulltitle"`
+	Description string         `json:"description"`
+	Duration    float64        `json:"duration"`
+	UploadDate  string         `json:"upload_date"` // YYYYMMDD
+	Timestamp   int64          `json:"timestamp"`   // unix seconds, when present
+	Comments    []ytdlpComment `json:"comments"`    // populated when --write-comments was passed
+}
+
+// ytdlpComment matches the shape yt-dlp puts into info.json. Field names
+// are stable across versions for the basic ones; we accept either author /
+// author_id and either timestamp / time_text.
+type ytdlpComment struct {
+	Author    string `json:"author"`
+	AuthorID  string `json:"author_id"`
+	Text      string `json:"text"`
+	LikeCount int64  `json:"like_count"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+func (c ytdlpComment) toDownloaded() DownloadedComment {
+	author := c.Author
+	if author == "" {
+		author = c.AuthorID
+	}
+	dc := DownloadedComment{
+		Author: author,
+		Text:   c.Text,
+		Likes:  c.LikeCount,
+	}
+	if c.Timestamp > 0 {
+		dc.PostedAt = time.Unix(c.Timestamp, 0)
+	}
+	return dc
 }
 
 func (i ytdlpInfo) posted() time.Time {

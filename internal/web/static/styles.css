@@ -361,6 +361,13 @@ button.danger:hover { background: var(--danger); color: #1a0808; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 .crumb-link { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--fg-dim); text-decoration: none; }
 .crumb-link:hover { color: var(--fg); text-decoration: none; }
+.comment-list { list-style: none; padding: 0; margin: 0.4rem 0; }
+.comment-list li { padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+.comment-list li:last-child { border-bottom: none; }
+.comment-meta { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; font-size: 0.78rem; color: var(--fg-dim); }
+.comment-author { font-weight: 600; color: var(--fg); }
+.comment-likes { color: var(--accent); }
+.comment-text { margin: 0.2rem 0 0; white-space: pre-wrap; line-height: 1.45; }
 
 .archived-shell {
     position: relative;

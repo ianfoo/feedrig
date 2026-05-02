@@ -634,6 +634,7 @@ func (s *Server) player(w http.ResponseWriter, r *http.Request) {
 	summary, _ := s.enrich.GetSummary(r.Context(), v.ID)
 	transcript, _ := s.enrich.GetTranscript(r.Context(), v.ID)
 	tags, _ := s.enrich.TagsForVideo(r.Context(), v.ID)
+	comments, _ := s.enrich.CommentsForVideo(r.Context(), v.ID)
 
 	mediaURL := s.publicURL(v.FilePath)
 	thumbURL := ""
@@ -648,6 +649,7 @@ func (s *Server) player(w http.ResponseWriter, r *http.Request) {
 		"Summary":    summary,
 		"Transcript": transcript,
 		"Tags":       tags,
+		"Comments":   comments,
 		"Prev":       prev, // newer
 		"Next":       next, // older
 		"MediaURL":   mediaURL,

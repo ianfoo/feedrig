@@ -61,6 +61,23 @@
             <p class="description">{{.Text}}</p>
         </details>
         {{end}}
+        {{if .Comments}}
+        <details class="description-block">
+            <summary>Top comments ({{len .Comments}})</summary>
+            <ul class="comment-list">
+                {{range .Comments}}
+                <li>
+                    <div class="comment-meta">
+                        {{with .Author}}<span class="comment-author">@{{.}}</span>{{end}}
+                        {{if gt .Likes 0}}<span class="comment-likes">♥ {{.Likes}}</span>{{end}}
+                        {{with .PostedAt}}<span class="comment-time">{{humanTime .}}</span>{{end}}
+                    </div>
+                    <p class="comment-text">{{.Text}}</p>
+                </li>
+                {{end}}
+            </ul>
+        </details>
+        {{end}}
         {{with .Video.Description}}<details class="description-block"><summary>Original caption</summary><p class="description">{{.}}</p></details>{{end}}
         <p class="hint">Keyboard: <kbd>Space</kbd> play/pause · <kbd>J</kbd>/<kbd>L</kbd> seek 5s · <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> prev/next video · <kbd>1</kbd>–<kbd>7</kbd> speed</p>
     </section>
