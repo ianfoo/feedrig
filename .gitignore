@@ -30,3 +30,21 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Local data
+/data/*
+!/data/.gitkeep
+/media/*
+!/media/.gitkeep
+/feedrig
+/tmp/
+/build-errors.log
+
+# SPA build artifacts
+/spa/node_modules/
+/spa/dist/
+/spa/tsconfig.tsbuildinfo
+/internal/web/static/app/assets/
+/internal/web/static/app/index.html
+!/internal/web/static/app/.gitkeep
+

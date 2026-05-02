@@ -1,0 +1,48 @@
+{{template "head" (dict "Title" (printf "Digest: %s" .Group.Name) "Crumb" .Group.Name)}}
+
+<section class="panel digest-header">
+    <div class="row-between">
+        <div>
+            <h1>{{.Group.Name}} digest</h1>
+            <p class="meta">Generated {{humanTime .GeneratedAt}} · last {{.Group.RecencyDays}} days · {{len .Rows}} item{{if ne (len .Rows) 1}}s{{end}}</p>
+        </div>
+        <div>
+            <a class="nav-btn" href="/groups/{{.Group.Slug}}">View as feed</a>
+            <button onclick="window.print()" class="nav-btn">Print</button>
+        </div>
+    </div>
+</section>
+
+{{if .Rows}}
+{{range .Rows}}
+<article class="digest-item">
+    <div class="digest-grid">
+        <a href="/videos/{{.Video.ID}}" class="digest-thumb">
+            {{if .Video.ThumbnailPath}}
+                <img src="{{thumbURL .Video}}" alt="">
+            {{else}}
+                <div class="thumb-empty"></div>
+            {{end}}
+        </a>
+        <div class="digest-body">
+            <h2><a href="/videos/{{.Video.ID}}">{{or .Video.Title "(untitled)"}}</a></h2>
+            <p class="meta">
+                @{{.Creator}} ·
+                {{if .Video.PostedAt}}{{humanTime .Video.PostedAt}}{{else}}{{humanTime .Video.DownloadedAt}}{{end}}
+                {{with duration .Video.DurationSeconds}} · {{.}}{{end}}
+            </p>
+            {{if .Tags}}
+            <div class="tag-row tight">
+                {{range .Tags}}<span class="tag">{{.Name}}</span>{{end}}
+            </div>
+            {{end}}
+            {{with .Summary}}<p class="digest-summary">{{.Summary}}</p>{{end}}
+        </div>
+    </div>
+</article>
+{{end}}
+{{else}}
+<p class="empty">No new content in the window.</p>
+{{end}}
+
+{{template "foot" .}}

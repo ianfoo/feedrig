@@ -1,0 +1,10 @@
+.git
+.gitignore
+.dockerignore
+Dockerfile
+data/
+media/
+feedrig
+*.test
+*.out
+docs/

@@ -1,0 +1,50 @@
+{{template "head" (dict "Title" (printf "@%s — history" .Creator.Handle) "Crumb" (printf "@%s — history" .Creator.Handle))}}
+{{template "flash" .}}
+
+<section class="panel">
+    <div class="row-between">
+        <div>
+            <h1>@{{.Creator.Handle}} · history</h1>
+            <p class="meta">All videos ever fetched, including ones whose media has been swept (state="archived"). Re-download to bring an archived video back.</p>
+        </div>
+        <a href="/creators/{{.Creator.ID}}" class="nav-btn">← Active</a>
+    </div>
+</section>
+
+<section class="panel">
+    {{if .Rows}}
+    <ul class="video-grid">
+        {{range .Rows}}
+        <li class="video-card state-{{.Video.State}}">
+            <a href="/videos/{{.Video.ID}}">
+                {{if .Video.ThumbnailPath}}
+                <div class="thumb"><img src="{{thumbURL .Video}}" alt=""></div>
+                {{else}}
+                <div class="thumb thumb-empty"></div>
+                {{end}}
+                <div class="card-body">
+                    <div class="card-title">{{or .Video.Title "(untitled)"}}</div>
+                    <div class="card-meta">
+                        {{if .Video.PostedAt}}{{humanTime .Video.PostedAt}}{{else}}{{humanTime .Video.DownloadedAt}}{{end}}
+                    </div>
+                    {{if .Tags}}<div class="tag-row tight">{{range .Tags}}<span class="tag">{{.Name}}</span>{{end}}</div>{{end}}
+                    {{with .Summary}}<div class="card-summary">{{.Summary}}</div>{{end}}
+                    <span class="badge state-badge state-{{.Video.State}}">{{.Video.State}}</span>
+                </div>
+            </a>
+            {{if eq (printf "%s" .Video.State) "archived"}}
+            <div class="card-actions">
+                <form method="post" action="/videos/{{.Video.ID}}/redownload">
+                    <button type="submit" class="primary tiny">Re-download</button>
+                </form>
+            </div>
+            {{end}}
+        </li>
+        {{end}}
+    </ul>
+    {{else}}
+    <p class="empty">No history yet.</p>
+    {{end}}
+</section>
+
+{{template "foot" .}}

@@ -1,0 +1,86 @@
+{{template "head" (dict "Title" (or .Video.Title "video") "Crumb" (printf "@%s" .Creator.Handle) "Script" "/static/player.js")}}
+
+<section class="player-shell"
+        data-video-id="{{.Video.ID}}"
+        data-resume="{{.Watch.LastPositionSeconds}}"
+        {{if .Prev}}data-prev-url="/videos/{{.Prev.ID}}"{{end}}
+        {{if .Next}}data-next-url="/videos/{{.Next.ID}}"{{end}}>
+    {{if eq (printf "%s" .Video.State) "archived"}}
+    <div class="archived-shell">
+        {{if .ThumbURL}}<img src="{{.ThumbURL}}" alt="" class="archived-thumb">{{end}}
+        <div class="archived-overlay">
+            <h3>Archived</h3>
+            <p>The media file for this video has been removed by the TTL sweeper. Metadata, summary, and transcript are preserved. Re-download to watch.</p>
+            <form method="post" action="/videos/{{.Video.ID}}/redownload">
+                <button type="submit" class="primary">Re-download</button>
+            </form>
+        </div>
+    </div>
+    {{else}}
+    <video id="player" src="{{.MediaURL}}" {{with .ThumbURL}}poster="{{.}}"{{end}} controls preload="metadata"></video>
+    {{end}}
+
+    <div class="player-controls">
+        <div class="speed-row">
+            <span class="label">Speed</span>
+            {{range $s := slice 0.75 1.0 1.25 1.5 1.75 2.0 2.5}}
+            <button type="button" class="speed-btn" data-speed="{{$s}}">{{printf "%g×" $s}}</button>
+            {{end}}
+        </div>
+        <div class="action-row">
+            {{if .Prev}}<a class="nav-btn" href="/videos/{{.Prev.ID}}" title="Newer (←)">← Newer</a>{{else}}<span class="nav-btn disabled">← Newer</span>{{end}}
+            <form method="post" action="/videos/{{.Video.ID}}/save"><button type="submit" class="primary">Save</button></form>
+            <form method="post" action="/videos/{{.Video.ID}}/delete" onsubmit="return confirm('Delete this video?')"><button type="submit" class="danger">Delete</button></form>
+            {{if .Next}}<a class="nav-btn" href="/videos/{{.Next.ID}}" title="Older (→)">Older →</a>{{else}}<span class="nav-btn disabled">Older →</span>{{end}}
+        </div>
+    </div>
+
+    <section class="meta-panel">
+        <h2>{{or .Video.Title "(untitled)"}}</h2>
+        <p class="meta">
+            <a href="{{.Video.URL}}" target="_blank" rel="noopener">on instagram</a>
+            · {{if .Video.PostedAt}}posted {{humanTime .Video.PostedAt}}{{else}}downloaded {{humanTime .Video.DownloadedAt}}{{end}}
+            {{with duration .Video.DurationSeconds}} · {{.}}{{end}}
+        </p>
+        {{if .Tags}}
+        <div class="tag-row">
+            {{range .Tags}}<span class="tag">{{.Name}}</span>{{end}}
+        </div>
+        {{end}}
+        {{if .Summary}}
+        <div class="summary-block">
+            <h3>Summary</h3>
+            <p>{{.Summary.Summary}}</p>
+            {{with .Summary.Notes}}<div class="notes">{{.}}</div>{{end}}
+            <p class="meta tiny">{{.Summary.Model}} · {{humanTime .Summary.GeneratedAt}}</p>
+        </div>
+        {{end}}
+        {{with .Transcript}}
+        <details class="description-block transcript-block">
+            <summary>Transcript ({{.Model}}, {{len .Text}} chars)</summary>
+            <p class="description">{{.Text}}</p>
+        </details>
+        {{end}}
+        {{if .Comments}}
+        <details class="description-block">
+            <summary>Top comments ({{len .Comments}})</summary>
+            <ul class="comment-list">
+                {{range .Comments}}
+                <li>
+                    <div class="comment-meta">
+                        {{with .Author}}<span class="comment-author">@{{.}}</span>{{end}}
+                        {{if gt .Likes 0}}<span class="comment-likes">♥ {{.Likes}}</span>{{end}}
+                        {{with .PostedAt}}<span class="comment-time">{{humanTime .}}</span>{{end}}
+                    </div>
+                    <p class="comment-text">{{.Text}}</p>
+                </li>
+                {{end}}
+            </ul>
+        </details>
+        {{end}}
+        {{with .Video.Description}}<details class="description-block"><summary>Original caption</summary><p class="description">{{.}}</p></details>{{end}}
+        <p class="hint">Keyboard: <kbd>Space</kbd> play/pause · <kbd>J</kbd>/<kbd>L</kbd> seek 5s · <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> prev/next video · <kbd>1</kbd>–<kbd>7</kbd> speed</p>
+    </section>
+</section>
+
+{{template "foot" (dict "Script" "/static/player.js")}}

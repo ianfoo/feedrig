@@ -1,0 +1,37 @@
+{{template "head" (dict "Title" "Settings" "Crumb" "Settings")}}
+{{template "flash" .}}
+
+<section class="panel">
+    <h1>Settings</h1>
+    <form method="post" action="/settings" class="settings-form">
+        <fieldset>
+            <legend>Polling cadence</legend>
+            <label>
+                <span>Default poll interval (hours)</span>
+                <input type="number" name="poll_hours" min="1" max="168" value="{{.PollHours}}">
+            </label>
+            <p class="hint">How often each creator's profile is checked for new posts. Per-creator overrides are configurable on the creator detail page (planned).</p>
+        </fieldset>
+
+        <fieldset>
+            <legend>Self-curating library</legend>
+            <label>
+                <span>Auto-expire active videos after (days)</span>
+                <input type="number" name="ttl_days" min="1" max="365" value="{{.TTLDays}}">
+            </label>
+            <label>
+                <span>Grace window before media file is removed (days)</span>
+                <input type="number" name="grace_days" min="1" max="60" value="{{.GraceDays}}">
+            </label>
+            <label>
+                <span>Metadata TTL on archived rows (days; 0 = keep forever)</span>
+                <input type="number" name="metadata_ttl_days" min="0" max="3650" value="{{if eq .MetadataTTLDays -1}}0{{else}}{{.MetadataTTLDays}}{{end}}">
+            </label>
+            <p class="hint">After the grace window, videos move to "archived" — media file removed, but title, description, summary, transcript, tags, and thumbnail are kept so you can review history and re-download. Metadata TTL caps how long archived rows linger before they're hard-purged. Set to 0 to keep history forever; storage cost is roughly 35–40 KB per archived row.</p>
+        </fieldset>
+
+        <button type="submit" class="primary">Save</button>
+    </form>
+</section>
+
+{{template "foot" .}}

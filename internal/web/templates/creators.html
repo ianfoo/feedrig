@@ -1,0 +1,96 @@
+{{template "head" (dict "Title" "Creators" "Script" "/static/creators.js")}}
+{{template "flash" .}}
+
+<section class="panel">
+    <div class="row-between">
+        <h1>Creators</h1>
+        <nav class="sort-nav">
+            <span class="label">Sort</span>
+            <a href="/creators?sort=handle"       class="{{if eq .Sort "handle"}}active{{end}}">name</a>
+            <a href="/creators?sort=added"        class="{{if eq .Sort "added"}}active{{end}}">added</a>
+            <a href="/creators?sort=followed"     class="{{if eq .Sort "followed"}}active{{end}}">followed (IG)</a>
+            <a href="/creators?sort=last_fetched" class="{{if eq .Sort "last_fetched"}}active{{end}}">last fetched</a>
+        </nav>
+    </div>
+
+    <form method="post" action="/creators" class="inline-form">
+        <input name="handle" placeholder="instagram handle or URL" required>
+        <input name="display_name" placeholder="display name (optional)">
+        <button type="submit">Add one</button>
+    </form>
+
+    <details class="bulk-form">
+        <summary>Bulk add (paste a list or upload a file)</summary>
+        <form method="post" action="/creators/bulk" enctype="multipart/form-data">
+            <textarea name="list" rows="5" placeholder="One per line. Optionally &quot;handle, Display Name&quot;. Comments start with #.&#10;natgeo, National Geographic&#10;samhowell, Sam Howell&#10;# bass guitar:&#10;ariadixongotbass"></textarea>
+            <div class="bulk-actions">
+                <label class="file-label">
+                    <input type="file" name="file" accept=".txt,.csv,text/plain,text/csv">
+                    <span>Or upload a .txt / .csv</span>
+                </label>
+                <button type="submit" class="primary">Add all</button>
+            </div>
+        </form>
+    </details>
+
+    <details class="bulk-form">
+        <summary>Import from Instagram data export (following.json)</summary>
+        <p class="hint">In Instagram → Settings → Accounts Center → Your information and permissions → Download your information → request the JSON export. Inside the zip, find <code>connections/followers_and_following/following.json</code> and upload it here. Followed-on dates are imported when present, so you can sort by recency.</p>
+        <form method="post" action="/creators/import" enctype="multipart/form-data">
+            <label class="file-label">
+                <input type="file" name="file" accept=".json,application/json" required>
+                <span>following.json</span>
+            </label>
+            <button type="submit" class="primary">Import</button>
+        </form>
+    </details>
+</section>
+
+<section class="panel">
+    <div class="row-between">
+        <h2 style="margin:0">{{len .Rows}} creator{{if ne (len .Rows) 1}}s{{end}}{{if .AnyFetching}} · {{.AnyFetching}} fetching{{end}}</h2>
+        <div class="header-actions">
+            <input id="creator-filter" type="search" placeholder="Filter…" class="filter-input">
+            <form method="post" action="/creators/fetch-all" style="display:inline">
+                <button type="submit" class="primary" {{if not .Rows}}disabled{{end}}>Fetch all</button>
+            </form>
+        </div>
+    </div>
+
+    {{if .Rows}}
+    <ul class="creator-list" id="creator-list">
+        {{range .Rows}}
+        <li data-handle="{{.Creator.Handle}}" data-name="{{.Creator.DisplayName}}">
+            <div class="creator-row">
+                <a href="/creators/{{.Creator.ID}}" class="creator-link">
+                    <span class="handle">@{{.Creator.Handle}}</span>
+                    {{with .Creator.DisplayName}}<span class="dn">{{.}}</span>{{end}}
+                    {{if .IsFetching}}<span class="badge fetching-badge">fetching…</span>{{end}}
+                </a>
+                <span class="meta">
+                    {{with .Creator.FollowedAt}}followed {{humanTime .}} · {{end}}
+                    {{with .Creator.LastFetchedAt}}fetched {{humanTime .}}{{else}}never fetched{{end}}
+                </span>
+                <form method="post" action="/creators/{{.Creator.ID}}/fetch" style="display:inline">
+                    <button type="submit" class="tiny" {{if .IsFetching}}disabled{{end}}>Fetch</button>
+                </form>
+                <details class="row-actions">
+                    <summary>⋯</summary>
+                    <form method="post" action="/creators/{{.Creator.ID}}/update" class="inline-form">
+                        <input name="display_name" value="{{.Creator.DisplayName}}" placeholder="display name">
+                        <button type="submit">Save</button>
+                    </form>
+                    <form method="post" action="/creators/{{.Creator.ID}}/delete" onsubmit="return confirm('Remove @{{.Creator.Handle}}? Their downloaded videos remain (cascade delete is off).')">
+                        <button type="submit" class="danger">Remove</button>
+                    </form>
+                </details>
+            </div>
+        </li>
+        {{end}}
+    </ul>
+    {{else}}
+    <p class="empty">No creators yet. Add one above to get started.</p>
+    {{end}}
+</section>
+
+{{template "foot" (dict "Script" "/static/creators.js")}}

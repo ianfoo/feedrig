@@ -1,0 +1,35 @@
+{{template "head" (dict "Title" "Search" "Crumb" "Search")}}
+
+<section class="panel">
+    <h1>Search the corpus</h1>
+    <p class="meta">Searches across video titles, descriptions, summaries, and transcripts. Underlies a future MCP server so an LLM can find videos that talk about a topic.</p>
+    <form method="get" action="/search" class="inline-form">
+        <input name="q" value="{{.Query}}" placeholder="bass guitar, election, pizza dough…" autofocus>
+        <button type="submit" class="primary">Search</button>
+    </form>
+</section>
+
+{{if .Query}}
+<section class="panel">
+    {{if .Rows}}
+    <p class="meta">{{len .Rows}} match{{if ne (len .Rows) 1}}es{{end}}</p>
+    <ul class="search-list">
+        {{range .Rows}}
+        <li>
+            <a href="/videos/{{.Video.ID}}">
+                <div class="search-title">{{or .Video.Title "(untitled)"}}</div>
+                <div class="search-meta">
+                    @{{.Creator}} · matched in <span class="match-field">{{.Hit.Field}}</span> · state: <span class="state-{{.Video.State}}">{{.Video.State}}</span>
+                </div>
+                <div class="search-excerpt">{{.Hit.Excerpt}}</div>
+            </a>
+        </li>
+        {{end}}
+    </ul>
+    {{else}}
+    <p class="empty">No matches for {{.Query}}.</p>
+    {{end}}
+</section>
+{{end}}
+
+{{template "foot" .}}

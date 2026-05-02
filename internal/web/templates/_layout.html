@@ -1,0 +1,39 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Title}} · feedrig</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <header class="topbar">
+        <a href="/creators" class="brand">
+            <img src="/static/logo.svg" alt="" class="brand-logo">
+            <span>feedrig</span>
+        </a>
+        {{with .Crumb}}<a href="/creators" class="crumb-link">← <span class="crumb">{{.}}</span></a>{{end}}
+        <nav class="nav-right">
+            <a href="/creators">Creators</a>
+            <a href="/groups">Groups</a>
+            <a href="/search">Search</a>
+            <a href="/pending">Pending{{with stats}}{{if gt .PendingCount 0}} <span class="nav-count">{{.PendingCount}}</span>{{end}}{{end}}</a>
+            <a href="/settings">Settings</a>
+            {{with stats}}<span class="nav-stat" title="Media library size — {{.VideoCount}} videos">{{.MediaBytesHuman}}</span>{{end}}
+            <a href="/app/" title="React SPA (mobile-first)">SPA →</a>
+        </nav>
+    </header>
+    <main>
+{{end}}
+
+{{define "foot"}}
+    </main>
+{{with .Script}}<script src="{{.}}" defer></script>{{end}}
+</body>
+</html>{{end}}
+
+{{define "flash"}}
+{{with .Flash}}<div class="flash flash-ok">{{.}}</div>{{end}}
+{{with .Error}}<div class="flash flash-err">{{.}}</div>{{end}}
+{{end}}
